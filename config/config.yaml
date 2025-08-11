@@ -1,0 +1,74 @@
+# Go-RocketMQ 配置文件
+
+# NameServer 配置
+nameserver:
+  listen_port: 9876
+  log_level: "info"
+  log_file: "logs/nameserver.log"
+
+# Broker 配置  
+broker:
+  broker_name: "DefaultBroker"
+  broker_id: 0
+  listen_port: 10911
+  ha_listen_port: 10912
+  nameserver_addr: "127.0.0.1:9876"
+  store_path_root_dir: "data/broker"
+  store_path_commit_log: "data/broker/commitlog"
+  store_path_consume_queue: "data/broker/consumequeue"
+  store_path_index: "data/broker/index"
+  log_level: "info"
+  log_file: "logs/broker.log"
+  
+  # 消息存储配置
+  message_store:
+    commit_log_file_size: 1073741824  # 1GB
+    consume_queue_file_size: 6000000  # 约6MB
+    flush_disk_type: "ASYNC_FLUSH"    # SYNC_FLUSH, ASYNC_FLUSH
+    flush_interval_commit_log: 500    # ms
+    flush_interval_consume_queue: 1000 # ms
+    
+  # 性能配置
+  performance:
+    send_message_thread_pool_nums: 16
+    pull_message_thread_pool_nums: 16
+    admin_broker_thread_pool_nums: 16
+    client_manage_thread_pool_nums: 32
+
+# Producer 配置
+producer:
+  default_topic_queue_nums: 4
+  send_msg_timeout: 3000  # ms
+  compress_msg_body_over_howmuch: 4096  # bytes
+  retry_times_when_send_failed: 2
+  retry_times_when_send_async_failed: 2
+  max_message_size: 4194304  # 4MB
+
+# Consumer 配置
+consumer:
+  consume_thread_min: 20
+  consume_thread_max: 64
+  consume_message_batch_max_size: 1
+  pull_batch_size: 32
+  pull_interval: 0  # ms
+  pull_threshold_for_queue: 1000
+  pull_threshold_size_for_queue: 104857600  # 100MB
+
+# 性能测试配置
+benchmark:
+  default_message_count: 10000
+  default_message_size: 1024  # bytes
+  default_concurrency: 10
+  default_topic: "BenchmarkTopic"
+  
+# 日志配置
+logging:
+  level: "info"  # debug, info, warn, error
+  format: "text"  # text, json
+  output: "file"  # console, file, both
+  
+# 监控配置
+monitoring:
+  enable_metrics: true
+  metrics_port: 8080
+  health_check_interval: 30  # seconds
