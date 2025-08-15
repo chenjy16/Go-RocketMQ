@@ -1,0 +1,253 @@
+# Go-RocketMQ RBAC配置
+
+---
+# ServiceAccount for Go-RocketMQ
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rocketmq-serviceaccount
+  namespace: rocketmq
+  labels:
+    app.kubernetes.io/name: go-rocketmq
+    app.kubernetes.io/part-of: go-rocketmq
+  annotations:
+    description: "ServiceAccount for Go-RocketMQ components"
+automountServiceAccountToken: true
+
+---
+# ClusterRole for Go-RocketMQ
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: rocketmq-clusterrole
+  labels:
+    app.kubernetes.io/name: go-rocketmq
+    app.kubernetes.io/part-of: go-rocketmq
+rules:
+  # Pod相关权限
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  
+  # Service相关权限
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "watch"]
+  
+  # Endpoints相关权限
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    verbs: ["get", "list", "watch"]
+  
+  # ConfigMap相关权限
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+  
+  # Secret相关权限
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+  
+  # Node相关权限（用于获取节点信息）
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  
+  # Event相关权限（用于记录事件）
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  
+  # StatefulSet相关权限
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["get", "list", "watch"]
+  
+  # Deployment相关权限
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch"]
+  
+  # ReplicaSet相关权限
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get", "list", "watch"]
+
+---
+# Role for namespace-specific operations
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: rocketmq-role
+  namespace: rocketmq
+  labels:
+    app.kubernetes.io/name: go-rocketmq
+    app.kubernetes.io/part-of: go-rocketmq
+rules:
+  # Pod相关权限（命名空间级别）
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Pod日志权限
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list"]
+  
+  # Pod执行权限
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+  
+  # Service相关权限
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Endpoints相关权限
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # ConfigMap相关权限
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Secret相关权限
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # PersistentVolumeClaim相关权限
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Event相关权限
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # StatefulSet相关权限
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Deployment相关权限
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # ReplicaSet相关权限
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # HorizontalPodAutoscaler相关权限
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # PodDisruptionBudget相关权限
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # NetworkPolicy相关权限
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Ingress相关权限
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+---
+# ClusterRoleBinding for Go-RocketMQ
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: rocketmq-clusterrolebinding
+  labels:
+    app.kubernetes.io/name: go-rocketmq
+    app.kubernetes.io/part-of: go-rocketmq
+subjects:
+  - kind: ServiceAccount
+    name: rocketmq-serviceaccount
+    namespace: rocketmq
+roleRef:
+  kind: ClusterRole
+  name: rocketmq-clusterrole
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# RoleBinding for Go-RocketMQ
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: rocketmq-rolebinding
+  namespace: rocketmq
+  labels:
+    app.kubernetes.io/name: go-rocketmq
+    app.kubernetes.io/part-of: go-rocketmq
+subjects:
+  - kind: ServiceAccount
+    name: rocketmq-serviceaccount
+    namespace: rocketmq
+roleRef:
+  kind: Role
+  name: rocketmq-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# SecurityContext Constraints (OpenShift)
+# 注意：这个资源只在OpenShift环境中有效
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: rocketmq-scc
+  labels:
+    app.kubernetes.io/name: go-rocketmq
+    app.kubernetes.io/part-of: go-rocketmq
+  annotations:
+    description: "Security Context Constraints for Go-RocketMQ"
+allowHostDirVolumePlugin: false
+allowHostIPC: false
+allowHostNetwork: false
+allowHostPID: false
+allowHostPorts: false
+allowPrivilegedContainer: false
+allowedCapabilities: null
+defaultAddCapabilities: null
+requiredDropCapabilities:
+  - KILL
+  - MKNOD
+  - SETUID
+  - SETGID
+fsGroup:
+  type: MustRunAs
+  ranges:
+    - min: 1000
+      max: 65535
+readOnlyRootFilesystem: false
+runAsUser:
+  type: MustRunAsNonRoot
+seLinuxContext:
+  type: MustRunAs
+supplementalGroups:
+  type: MustRunAs
+  ranges:
+    - min: 1000
+      max: 65535
+volumes:
+  - configMap
+  - downwardAPI
+  - emptyDir
+  - persistentVolumeClaim
+  - projected
+  - secret
+users:
+  - system:serviceaccount:rocketmq:rocketmq-serviceaccount

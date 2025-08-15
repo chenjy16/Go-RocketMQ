@@ -59,10 +59,10 @@ func DefaultConsumerConfig() *ConsumerConfig {
 	return &ConsumerConfig{
 		GroupName:        "DefaultConsumerGroup",
 		NameServerAddr:   "127.0.0.1:9876",
-		ConsumeFromWhere: common.ConsumeFromLastOffset,
+		ConsumeFromWhere: common.ConsumeFromFirstOffset,
 		MessageModel:     common.Clustering,
 		ConsumeThreadMin: 1,
-		ConsumeThreadMax: 4,
+		ConsumeThreadMax: 20,
 		PullInterval:     1 * time.Second,
 		PullBatchSize:    32,
 		ConsumeTimeout:   15 * time.Minute,
@@ -81,6 +81,18 @@ func (c *Consumer) Subscribe(topic, subExpression string, listener common.Messag
 	
 	if c.started {
 		return fmt.Errorf("consumer already started, cannot subscribe new topic")
+	}
+	
+	if topic == "" {
+		return fmt.Errorf("topic cannot be empty")
+	}
+	
+	if listener == nil {
+		return fmt.Errorf("listener cannot be nil")
+	}
+	
+	if _, exists := c.subscriptions[topic]; exists {
+		return fmt.Errorf("topic %s already subscribed", topic)
 	}
 	
 	subscription := &Subscription{
@@ -129,7 +141,7 @@ func (c *Consumer) Stop() error {
 	defer c.mutex.Unlock()
 	
 	if !c.started {
-		return nil
+		return fmt.Errorf("consumer not started")
 	}
 	
 	close(c.shutdown)
@@ -192,7 +204,17 @@ func (c *Consumer) pullMessagesForTopic(topic string, subscription *Subscription
 // mockPullMessages 模拟拉取消息（用于测试）
 func (c *Consumer) mockPullMessages(topic string) []*common.MessageExt {
 	// 这是一个模拟实现，实际应该从Broker拉取
-	return nil
+	return []*common.MessageExt{
+		{
+			Message: &common.Message{
+				Topic: topic,
+				Body:  []byte("mock message body"),
+			},
+			MsgId:     "mock_msg_id_001",
+			QueueId:   0,
+			StoreSize: 100,
+		},
+	}
 }
 
 // consumeMessages 消费消息

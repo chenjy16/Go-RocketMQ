@@ -1,0 +1,643 @@
+# Go-RocketMQ Broker Kubernetes部署配置
+
+---
+# ConfigMap for Broker Master configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: broker-master-config
+  namespace: rocketmq
+  labels:
+    app.kubernetes.io/name: go-rocketmq
+    app.kubernetes.io/component: broker
+    app.kubernetes.io/part-of: go-rocketmq
+    broker-role: master
+data:
+  broker.conf: |
+    # Broker Master配置文件
+    brokerName=broker-a
+    brokerId=0
+    listenPort=10911
+    haListenPort=10912
+    nameServerAddr=nameserver-service:9876
+    clusterName=DefaultCluster
+    brokerRole=SYNC_MASTER
+    flushDiskType=ASYNC_FLUSH
+    storePathRoot=/data/rocketmq
+    storePathCommitLog=/data/rocketmq/commitlog
+    storePathConsumeQueue=/data/rocketmq/consumequeue
+    storePathIndex=/data/rocketmq/index
+    logLevel=INFO
+    logFile=/var/log/rocketmq/broker.log
+    # 性能配置
+    sendMessageThreadPoolNums=16
+    pullMessageThreadPoolNums=16
+    queryMessageThreadPoolNums=8
+    adminBrokerThreadPoolNums=16
+    clientManageThreadPoolNums=32
+    consumerManageThreadPoolNums=32
+    # 存储配置
+    mappedFileSizeCommitLog=1073741824
+    mappedFileSizeConsumeQueue=6000000
+    flushIntervalCommitLog=500
+    flushIntervalConsumeQueue=1000
+
+---
+# ConfigMap for Broker Slave configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: broker-slave-config
+  namespace: rocketmq
+  labels:
+    app.kubernetes.io/name: go-rocketmq
+    app.kubernetes.io/component: broker
+    app.kubernetes.io/part-of: go-rocketmq
+    broker-role: slave
+data:
+  broker.conf: |
+    # Broker Slave配置文件
+    brokerName=broker-a
+    brokerId=1
+    listenPort=10921
+    haListenPort=10922
+    nameServerAddr=nameserver-service:9876
+    clusterName=DefaultCluster
+    brokerRole=SLAVE
+    flushDiskType=ASYNC_FLUSH
+    storePathRoot=/data/rocketmq
+    storePathCommitLog=/data/rocketmq/commitlog
+    storePathConsumeQueue=/data/rocketmq/consumequeue
+    storePathIndex=/data/rocketmq/index
+    logLevel=INFO
+    logFile=/var/log/rocketmq/broker.log
+    # HA配置
+    haMasterAddress=broker-master-service:10912
+    # 性能配置
+    sendMessageThreadPoolNums=16
+    pullMessageThreadPoolNums=16
+    queryMessageThreadPoolNums=8
+    adminBrokerThreadPoolNums=16
+    clientManageThreadPoolNums=32
+    consumerManageThreadPoolNums=32
+    # 存储配置
+    mappedFileSizeCommitLog=1073741824
+    mappedFileSizeConsumeQueue=6000000
+    flushIntervalCommitLog=500
+    flushIntervalConsumeQueue=1000
+
+---
+# Service for Broker Master
+apiVersion: v1
+kind: Service
+metadata:
+  name: broker-master-service
+  namespace: rocketmq
+  labels:
+    app.kubernetes.io/name: go-rocketmq
+    app.kubernetes.io/component: broker
+    app.kubernetes.io/part-of: go-rocketmq
+    broker-role: master
+spec:
+  type: ClusterIP
+  ports:
+    - name: broker
+      port: 10911
+      targetPort: 10911
+      protocol: TCP
+    - name: ha
+      port: 10912
+      targetPort: 10912
+      protocol: TCP
+    - name: metrics
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: go-rocketmq
+    app.kubernetes.io/component: broker
+    broker-role: master
+
+---
+# Service for Broker Slave
+apiVersion: v1
+kind: Service
+metadata:
+  name: broker-slave-service
+  namespace: rocketmq
+  labels:
+    app.kubernetes.io/name: go-rocketmq
+    app.kubernetes.io/component: broker
+    app.kubernetes.io/part-of: go-rocketmq
+    broker-role: slave
+spec:
+  type: ClusterIP
+  ports:
+    - name: broker
+      port: 10921
+      targetPort: 10921
+      protocol: TCP
+    - name: ha
+      port: 10922
+      targetPort: 10922
+      protocol: TCP
+    - name: metrics
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: go-rocketmq
+    app.kubernetes.io/component: broker
+    broker-role: slave
+
+---
+# Headless Service for Broker Master StatefulSet
+apiVersion: v1
+kind: Service
+metadata:
+  name: broker-master-headless
+  namespace: rocketmq
+  labels:
+    app.kubernetes.io/name: go-rocketmq
+    app.kubernetes.io/component: broker
+    app.kubernetes.io/part-of: go-rocketmq
+    broker-role: master
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - name: broker
+      port: 10911
+      targetPort: 10911
+      protocol: TCP
+    - name: ha
+      port: 10912
+      targetPort: 10912
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: go-rocketmq
+    app.kubernetes.io/component: broker
+    broker-role: master
+
+---
+# Headless Service for Broker Slave StatefulSet
+apiVersion: v1
+kind: Service
+metadata:
+  name: broker-slave-headless
+  namespace: rocketmq
+  labels:
+    app.kubernetes.io/name: go-rocketmq
+    app.kubernetes.io/component: broker
+    app.kubernetes.io/part-of: go-rocketmq
+    broker-role: slave
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - name: broker
+      port: 10921
+      targetPort: 10921
+      protocol: TCP
+    - name: ha
+      port: 10922
+      targetPort: 10922
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: go-rocketmq
+    app.kubernetes.io/component: broker
+    broker-role: slave
+
+---
+# StatefulSet for Broker Master
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: broker-master
+  namespace: rocketmq
+  labels:
+    app.kubernetes.io/name: go-rocketmq
+    app.kubernetes.io/component: broker
+    app.kubernetes.io/part-of: go-rocketmq
+    app.kubernetes.io/version: "1.0.0"
+    broker-role: master
+spec:
+  serviceName: broker-master-headless
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: go-rocketmq
+      app.kubernetes.io/component: broker
+      broker-role: master
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: go-rocketmq
+        app.kubernetes.io/component: broker
+        app.kubernetes.io/part-of: go-rocketmq
+        app.kubernetes.io/version: "1.0.0"
+        broker-role: master
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: rocketmq-serviceaccount
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      initContainers:
+        - name: wait-nameserver
+          image: busybox:1.35
+          command: ['sh', '-c']
+          args:
+            - |
+              echo "等待NameServer就绪..."
+              until nc -z nameserver-service 9876; do
+                echo "等待NameServer..."
+                sleep 2
+              done
+              echo "NameServer已就绪"
+      containers:
+        - name: broker
+          image: go-rocketmq:1.0.0
+          imagePullPolicy: IfNotPresent
+          command: ["/app/scripts/start.sh"]
+          args: ["broker"]
+          ports:
+            - name: broker
+              containerPort: 10911
+              protocol: TCP
+            - name: ha
+              containerPort: 10912
+              protocol: TCP
+            - name: metrics
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: ROCKETMQ_NAMESERVER_ADDR
+              value: "nameserver-service:9876"
+            - name: ROCKETMQ_BROKER_NAME
+              value: "broker-a"
+            - name: ROCKETMQ_BROKER_ID
+              value: "0"
+            - name: ROCKETMQ_BROKER_PORT
+              value: "10911"
+            - name: ROCKETMQ_BROKER_HA_PORT
+              value: "10912"
+            - name: ROCKETMQ_BROKER_ROLE
+              value: "SYNC_MASTER"
+            - name: ROCKETMQ_CLUSTER_NAME
+              value: "DefaultCluster"
+            - name: ROCKETMQ_FLUSH_DISK_TYPE
+              value: "ASYNC_FLUSH"
+            - name: ROCKETMQ_LOG_LEVEL
+              value: "INFO"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          resources:
+            requests:
+              memory: "2Gi"
+              cpu: "500m"
+            limits:
+              memory: "4Gi"
+              cpu: "2000m"
+          volumeMounts:
+            - name: config
+              mountPath: /etc/rocketmq
+              readOnly: true
+            - name: data
+              mountPath: /data/rocketmq
+            - name: logs
+              mountPath: /var/log/rocketmq
+          livenessProbe:
+            tcpSocket:
+              port: 10911
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            tcpSocket:
+              port: 10911
+            initialDelaySeconds: 30
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          startupProbe:
+            tcpSocket:
+              port: 10911
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 18
+      volumes:
+        - name: config
+          configMap:
+            name: broker-master-config
+            defaultMode: 0644
+      terminationGracePeriodSeconds: 60
+      restartPolicy: Always
+      dnsPolicy: ClusterFirst
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app.kubernetes.io/component
+                      operator: In
+                      values: ["broker"]
+                    - key: broker-role
+                      operator: In
+                      values: ["master"]
+                topologyKey: kubernetes.io/hostname
+      tolerations:
+        - key: "node.kubernetes.io/not-ready"
+          operator: "Exists"
+          effect: "NoExecute"
+          tolerationSeconds: 300
+        - key: "node.kubernetes.io/unreachable"
+          operator: "Exists"
+          effect: "NoExecute"
+          tolerationSeconds: 300
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app.kubernetes.io/name: go-rocketmq
+          app.kubernetes.io/component: broker
+          broker-role: master
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: "fast-ssd"
+        resources:
+          requests:
+            storage: 100Gi
+    - metadata:
+        name: logs
+        labels:
+          app.kubernetes.io/name: go-rocketmq
+          app.kubernetes.io/component: broker
+          broker-role: master
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: "fast-ssd"
+        resources:
+          requests:
+            storage: 20Gi
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: 0
+
+---
+# StatefulSet for Broker Slave
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: broker-slave
+  namespace: rocketmq
+  labels:
+    app.kubernetes.io/name: go-rocketmq
+    app.kubernetes.io/component: broker
+    app.kubernetes.io/part-of: go-rocketmq
+    app.kubernetes.io/version: "1.0.0"
+    broker-role: slave
+spec:
+  serviceName: broker-slave-headless
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: go-rocketmq
+      app.kubernetes.io/component: broker
+      broker-role: slave
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: go-rocketmq
+        app.kubernetes.io/component: broker
+        app.kubernetes.io/part-of: go-rocketmq
+        app.kubernetes.io/version: "1.0.0"
+        broker-role: slave
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: rocketmq-serviceaccount
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      initContainers:
+        - name: wait-broker-master
+          image: busybox:1.35
+          command: ['sh', '-c']
+          args:
+            - |
+              echo "等待Broker Master就绪..."
+              until nc -z broker-master-service 10911; do
+                echo "等待Broker Master..."
+                sleep 2
+              done
+              echo "Broker Master已就绪"
+      containers:
+        - name: broker
+          image: go-rocketmq:1.0.0
+          imagePullPolicy: IfNotPresent
+          command: ["/app/scripts/start.sh"]
+          args: ["broker"]
+          ports:
+            - name: broker
+              containerPort: 10921
+              protocol: TCP
+            - name: ha
+              containerPort: 10922
+              protocol: TCP
+            - name: metrics
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: ROCKETMQ_NAMESERVER_ADDR
+              value: "nameserver-service:9876"
+            - name: ROCKETMQ_BROKER_NAME
+              value: "broker-a"
+            - name: ROCKETMQ_BROKER_ID
+              value: "1"
+            - name: ROCKETMQ_BROKER_PORT
+              value: "10921"
+            - name: ROCKETMQ_BROKER_HA_PORT
+              value: "10922"
+            - name: ROCKETMQ_BROKER_ROLE
+              value: "SLAVE"
+            - name: ROCKETMQ_CLUSTER_NAME
+              value: "DefaultCluster"
+            - name: ROCKETMQ_FLUSH_DISK_TYPE
+              value: "ASYNC_FLUSH"
+            - name: ROCKETMQ_HA_MASTER_ADDRESS
+              value: "broker-master-service:10912"
+            - name: ROCKETMQ_LOG_LEVEL
+              value: "INFO"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          resources:
+            requests:
+              memory: "2Gi"
+              cpu: "500m"
+            limits:
+              memory: "4Gi"
+              cpu: "2000m"
+          volumeMounts:
+            - name: config
+              mountPath: /etc/rocketmq
+              readOnly: true
+            - name: data
+              mountPath: /data/rocketmq
+            - name: logs
+              mountPath: /var/log/rocketmq
+          livenessProbe:
+            tcpSocket:
+              port: 10921
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            tcpSocket:
+              port: 10921
+            initialDelaySeconds: 30
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          startupProbe:
+            tcpSocket:
+              port: 10921
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 18
+      volumes:
+        - name: config
+          configMap:
+            name: broker-slave-config
+            defaultMode: 0644
+      terminationGracePeriodSeconds: 60
+      restartPolicy: Always
+      dnsPolicy: ClusterFirst
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app.kubernetes.io/component
+                      operator: In
+                      values: ["broker"]
+                    - key: broker-role
+                      operator: In
+                      values: ["slave"]
+                topologyKey: kubernetes.io/hostname
+      tolerations:
+        - key: "node.kubernetes.io/not-ready"
+          operator: "Exists"
+          effect: "NoExecute"
+          tolerationSeconds: 300
+        - key: "node.kubernetes.io/unreachable"
+          operator: "Exists"
+          effect: "NoExecute"
+          tolerationSeconds: 300
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app.kubernetes.io/name: go-rocketmq
+          app.kubernetes.io/component: broker
+          broker-role: slave
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: "fast-ssd"
+        resources:
+          requests:
+            storage: 100Gi
+    - metadata:
+        name: logs
+        labels:
+          app.kubernetes.io/name: go-rocketmq
+          app.kubernetes.io/component: broker
+          broker-role: slave
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: "fast-ssd"
+        resources:
+          requests:
+            storage: 20Gi
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: 0
+
+---
+# PodDisruptionBudget for Broker Master
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: broker-master-pdb
+  namespace: rocketmq
+  labels:
+    app.kubernetes.io/name: go-rocketmq
+    app.kubernetes.io/component: broker
+    app.kubernetes.io/part-of: go-rocketmq
+    broker-role: master
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: go-rocketmq
+      app.kubernetes.io/component: broker
+      broker-role: master
+
+---
+# PodDisruptionBudget for Broker Slave
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: broker-slave-pdb
+  namespace: rocketmq
+  labels:
+    app.kubernetes.io/name: go-rocketmq
+    app.kubernetes.io/component: broker
+    app.kubernetes.io/part-of: go-rocketmq
+    broker-role: slave
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: go-rocketmq
+      app.kubernetes.io/component: broker
+      broker-role: slave

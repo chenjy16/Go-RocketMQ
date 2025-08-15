@@ -143,11 +143,13 @@ func (p *Producer) SendAsync(msg *common.Message, callback func(*common.SendResu
 		return fmt.Errorf("producer not started")
 	}
 
+	if callback == nil {
+		return fmt.Errorf("callback cannot be nil")
+	}
+
 	go func() {
 		result, err := p.SendSync(msg)
-		if callback != nil {
-			callback(result, err)
-		}
+		callback(result, err)
 	}()
 
 	return nil
@@ -391,6 +393,7 @@ func (p *Producer) updateRouteInfo() {
 // DefaultProducerConfig 返回默认生产者配置
 func DefaultProducerConfig() *ProducerConfig {
 	return &ProducerConfig{
+		GroupName:                        "DefaultProducerGroup",
 		SendMsgTimeout:                   3 * time.Second,
 		CompressMsgBodyOver:              4096,
 		RetryTimesWhenSendFailed:         2,

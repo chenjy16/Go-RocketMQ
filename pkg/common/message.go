@@ -1,6 +1,7 @@
 package common
 
 import (
+	"fmt"
 	"time"
 )
 
@@ -142,5 +143,5 @@ func (m *Message) GetProperty(key string) string {
 
 // String 返回消息队列的字符串表示
 func (mq *MessageQueue) String() string {
-	return mq.Topic + "@" + mq.BrokerName + "@" + string(rune(mq.QueueId))
+	return fmt.Sprintf("MessageQueue{topic=%s, brokerName=%s, queueId=%d}", mq.Topic, mq.BrokerName, mq.QueueId)
 }

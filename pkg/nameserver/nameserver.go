@@ -147,7 +147,10 @@ func (ns *NameServer) RegisterBroker(
 	ns.mutex.Lock()
 	defer ns.mutex.Unlock()
 
-	result := &protocol.RegisterBrokerResult{}
+	result := &protocol.RegisterBrokerResult{
+		HaServerAddr: haServerAddr,
+		MasterAddr:   brokerAddr,
+	}
 
 	// 更新集群信息
 	ns.routeTable.mutex.Lock()
@@ -265,8 +268,22 @@ func (ns *NameServer) GetRouteInfoByTopic(topic string) *protocol.TopicRouteData
 		// 构建BrokerData
 		brokerAddrs := ns.routeTable.brokerAddrTable[brokerName]
 		if brokerAddrs != nil {
+			// 从集群表中查找对应的集群名称
+			clusterName := ""
+			for cluster, brokers := range ns.routeTable.clusterAddrTable {
+				for _, broker := range brokers {
+					if broker == brokerName {
+						clusterName = cluster
+						break
+					}
+				}
+				if clusterName != "" {
+					break
+				}
+			}
+			
 			brokerData := &protocol.BrokerData{
-				Cluster:     "", // TODO: 从集群表中获取
+				Cluster:     clusterName,
 				BrokerName:  brokerName,
 				BrokerAddrs: brokerAddrs,
 			}
@@ -294,8 +311,10 @@ func (ns *NameServer) scanNotActiveBroker() {
 
 // scanNotActiveBrokerInternal 扫描不活跃Broker的内部实现
 func (ns *NameServer) scanNotActiveBrokerInternal() {
+	ns.mutex.Lock()
 	ns.routeTable.mutex.Lock()
 	defer ns.routeTable.mutex.Unlock()
+	defer ns.mutex.Unlock()
 
 	now := time.Now()
 	toRemove := make([]string, 0)
@@ -312,6 +331,8 @@ func (ns *NameServer) scanNotActiveBrokerInternal() {
 	for _, brokerAddr := range toRemove {
 		delete(ns.routeTable.brokerLiveTable, brokerAddr)
 		delete(ns.routeTable.filterServerTable, brokerAddr)
+		delete(ns.brokerLiveTable, brokerAddr)
+		delete(ns.filterServerTable, brokerAddr)
 		log.Printf("Removed inactive broker: %s", brokerAddr)
 	}
 }

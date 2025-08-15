@@ -12,6 +12,10 @@ import (
 
 	"go-rocketmq/pkg/common"
 	"go-rocketmq/pkg/protocol"
+	"go-rocketmq/pkg/store"
+	"go-rocketmq/pkg/ha"
+	"go-rocketmq/pkg/cluster"
+	"go-rocketmq/pkg/failover"
 )
 
 // Broker 代表一个消息代理
@@ -23,7 +27,7 @@ type Broker struct {
 	mutex        sync.RWMutex
 	
 	// 消息存储
-	messageStore *MessageStore
+	messageStore *store.DefaultMessageStore
 	
 	// Topic配置
 	topicConfigTable map[string]*protocol.TopicConfig
@@ -33,6 +37,11 @@ type Broker struct {
 	
 	// 生产者信息
 	producerTable map[string]*ProducerGroupInfo
+	
+	// 高可用性和集群组件
+	haService        *ha.HAService
+	clusterManager   *cluster.ClusterManager
+	failoverService  *failover.FailoverService
 }
 
 // Config Broker配置
@@ -53,13 +62,17 @@ type Config struct {
 	BrokerRole       int // 0: ASYNC_MASTER, 1: SYNC_MASTER, 2: SLAVE
 	HaListenPort     int
 	HaMasterAddress  string
-}
-
-// MessageStore 消息存储
-type MessageStore struct {
-	mutex    sync.RWMutex
-	messages map[string][]*common.MessageExt // topic -> messages
-	queues   map[string]map[int32][]*common.MessageExt // topic -> queueId -> messages
+	ReplicationMode  int // 0: ASYNC_REPLICATION, 1: SYNC_REPLICATION
+	
+	// 集群配置
+	EnableCluster    bool
+	ClusterManagerPort int
+	
+	// 故障转移配置
+	EnableFailover   bool
+	AutoFailover     bool
+	FailoverDelay    int // 故障转移延迟(秒)
+	BackupBrokers    []string
 }
 
 // ConsumerGroupInfo 消费者组信息
@@ -84,26 +97,130 @@ func NewBroker(config *Config) *Broker {
 		config = DefaultBrokerConfig()
 	}
 	
-	return &Broker{
+	// 创建存储配置
+	storeConfig := &store.StoreConfig{
+		StorePathRootDir:         config.StorePathRootDir,
+		StorePathCommitLog:       config.StorePathRootDir + "/commitlog",
+		StorePathConsumeQueue:    config.StorePathRootDir + "/consumequeue",
+		StorePathIndex:           config.StorePathRootDir + "/index",
+		MapedFileSizeCommitLog:   1024 * 1024 * 1024, // 1GB
+		MapedFileSizeConsumeQueue: 1024 * 1024 * 6,   // 6MB
+		FlushIntervalCommitLog:   500,  // 500ms
+		FlushIntervalConsumeQueue: 1000, // 1s
+		FlushDiskType:            store.FlushDiskType(config.FlushDiskType),
+		FileReservedTime:         72, // 72小时
+	}
+	
+	// 创建消息存储
+	messageStore, err := store.NewDefaultMessageStore(storeConfig)
+	if err != nil {
+		panic(fmt.Sprintf("failed to create message store: %v", err))
+	}
+	
+	broker := &Broker{
 		config:           config,
 		shutdown:         make(chan struct{}),
-		messageStore:     NewMessageStore(),
+		messageStore:     messageStore,
 		topicConfigTable: make(map[string]*protocol.TopicConfig),
 		consumerTable:    make(map[string]*ConsumerGroupInfo),
 		producerTable:    make(map[string]*ProducerGroupInfo),
 	}
-}
-
-// NewMessageStore 创建新的消息存储
-func NewMessageStore() *MessageStore {
-	return &MessageStore{
-		messages: make(map[string][]*common.MessageExt),
-		queues:   make(map[string]map[int32][]*common.MessageExt),
+	
+	// 初始化高可用性服务
+	if config.BrokerRole != 2 || config.HaMasterAddress != "" { // 不是普通Slave或配置了Master地址
+		haConfig := &ha.HAConfig{
+			BrokerRole:          ha.BrokerRole(config.BrokerRole),
+			ReplicationMode:     ha.ReplicationMode(config.ReplicationMode),
+			HaListenPort:        config.HaListenPort,
+			HaMasterAddress:     config.HaMasterAddress,
+			HaHeartbeatInterval: 5000,  // 5秒
+			HaConnectionTimeout: 3000,  // 3秒
+			MaxTransferSize:     65536, // 64KB
+			SyncFlushTimeout:    5000,  // 5秒
+		}
+		broker.haService = ha.NewHAService(haConfig, messageStore.GetCommitLog())
 	}
+	
+	// 初始化集群管理器
+	if config.EnableCluster {
+		broker.clusterManager = cluster.NewClusterManager(config.ClusterName)
+	}
+	
+	// 初始化故障转移服务
+	if config.EnableFailover && broker.clusterManager != nil {
+		broker.failoverService = failover.NewFailoverService(broker.clusterManager)
+	}
+	
+	return broker
 }
 
 // Start 启动Broker
 func (b *Broker) Start() error {
+	// 启动消息存储
+	if err := b.messageStore.Start(); err != nil {
+		return fmt.Errorf("failed to start message store: %v", err)
+	}
+	
+	// 启动高可用性服务
+	if b.haService != nil {
+		if err := b.haService.Start(); err != nil {
+			return fmt.Errorf("failed to start HA service: %v", err)
+		}
+		log.Printf("HA service started with role: %v", b.config.BrokerRole)
+	}
+	
+	// 启动集群管理器
+	if b.clusterManager != nil {
+		if err := b.clusterManager.Start(); err != nil {
+			return fmt.Errorf("failed to start cluster manager: %v", err)
+		}
+		
+		// 注册当前Broker到集群
+		brokerInfo := &cluster.BrokerInfo{
+			BrokerName:     b.config.BrokerName,
+			BrokerId:       b.config.BrokerId,
+			ClusterName:    b.config.ClusterName,
+			BrokerAddr:     fmt.Sprintf("localhost:%d", b.config.ListenPort),
+			Version:        "1.0.0",
+			DataVersion:    1,
+			LastUpdateTime: time.Now().UnixMilli(),
+			Role:           b.getBrokerRoleString(),
+			Status:         cluster.ONLINE,
+			Topics:         make(map[string]*cluster.TopicRouteInfo),
+		}
+		
+		if err := b.clusterManager.RegisterBroker(brokerInfo); err != nil {
+			return fmt.Errorf("failed to register broker to cluster: %v", err)
+		}
+		log.Printf("Broker registered to cluster: %s", b.config.ClusterName)
+	}
+	
+	// 启动故障转移服务
+	if b.failoverService != nil {
+		if err := b.failoverService.Start(); err != nil {
+			return fmt.Errorf("failed to start failover service: %v", err)
+		}
+		
+		// 注册故障转移策略
+		if b.config.AutoFailover {
+			policy := &failover.FailoverPolicy{
+				BrokerName:      b.config.BrokerName,
+				FailoverType:    failover.AUTO_FAILOVER,
+				BackupBrokers:   b.config.BackupBrokers,
+				AutoFailover:    true,
+				FailoverDelay:   time.Duration(b.config.FailoverDelay) * time.Second,
+				HealthThreshold: 3,
+				RecoveryPolicy:  failover.AUTO_RECOVERY,
+				Notifications:   []failover.NotificationConfig{},
+			}
+			
+			if err := b.failoverService.RegisterFailoverPolicy(policy); err != nil {
+				return fmt.Errorf("failed to register failover policy: %v", err)
+			}
+			log.Printf("Auto failover enabled for broker: %s", b.config.BrokerName)
+		}
+	}
+	
 	addr := fmt.Sprintf(":%d", b.config.ListenPort)
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -134,6 +251,29 @@ func (b *Broker) Stop() error {
 	if b.listener != nil {
 		b.listener.Close()
 	}
+	
+	// 停止故障转移服务
+	if b.failoverService != nil {
+		b.failoverService.Stop()
+		log.Printf("Failover service shutdown completed")
+	}
+	
+	// 停止集群管理器
+	if b.clusterManager != nil {
+		// 注销当前Broker
+		b.clusterManager.UnregisterBroker(b.config.BrokerName)
+		b.clusterManager.Stop()
+		log.Printf("Cluster manager shutdown completed")
+	}
+	
+	// 停止高可用性服务
+	if b.haService != nil {
+		b.haService.Shutdown()
+		log.Printf("HA service shutdown completed")
+	}
+	
+	// 停止消息存储
+	b.messageStore.Shutdown()
 	
 	b.wg.Wait()
 	log.Printf("Broker stopped: %s", b.config.BrokerName)
@@ -234,80 +374,79 @@ func (b *Broker) sendHeartbeatToNameServer() {
 	}
 }
 
+// getBrokerRoleString 获取Broker角色字符串
+func (b *Broker) getBrokerRoleString() string {
+	switch b.config.BrokerRole {
+	case 0:
+		return "ASYNC_MASTER"
+	case 1:
+		return "SYNC_MASTER"
+	case 2:
+		return "SLAVE"
+	default:
+		return "UNKNOWN"
+	}
+}
+
 // PutMessage 存储消息
 func (b *Broker) PutMessage(msg *common.Message) (*common.SendResult, error) {
-	b.messageStore.mutex.Lock()
-	defer b.messageStore.mutex.Unlock()
+	// 检查消息类型并路由到相应的处理方法
 	
-	// 创建扩展消息
-	msgExt := &common.MessageExt{
-		Message:     msg,
-		QueueId:     0, // 简化版本，使用固定队列ID
-		StoreSize:   int32(len(msg.Body)),
-		QueueOffset: 0,
-		SysFlag:     0,
-		BornTimestamp: time.Now(),
-		StoreTimestamp: time.Now(),
-		BornHost:    "127.0.0.1:0",
-		StoreHost:   fmt.Sprintf("127.0.0.1:%d", b.config.ListenPort),
+	// 检查是否为延迟消息
+	if delayLevelStr := msg.GetProperty(store.PROPERTY_DELAY_TIME_LEVEL); delayLevelStr != "" {
+		var delayLevel int32
+		if _, err := fmt.Sscanf(delayLevelStr, "%d", &delayLevel); err == nil {
+			return b.messageStore.PutDelayMessage(msg, delayLevel)
+		}
 	}
 	
-	// 存储到topic消息列表
-	messages := b.messageStore.messages[msg.Topic]
-	messages = append(messages, msgExt)
-	b.messageStore.messages[msg.Topic] = messages
-	
-	// 存储到队列
-	if b.messageStore.queues[msg.Topic] == nil {
-		b.messageStore.queues[msg.Topic] = make(map[int32][]*common.MessageExt)
+	// 检查是否为事务消息
+	if store.IsTransactionMessage(msg) {
+		producerGroup := msg.GetProperty(store.PROPERTY_PRODUCER_GROUP)
+		transactionId := store.GetTransactionId(msg)
+		if producerGroup != "" && transactionId != "" {
+			return b.messageStore.PrepareMessage(msg, producerGroup, transactionId)
+		}
 	}
-	queueMessages := b.messageStore.queues[msg.Topic][msgExt.QueueId]
-	queueMessages = append(queueMessages, msgExt)
-	b.messageStore.queues[msg.Topic][msgExt.QueueId] = queueMessages
 	
-	// 设置队列偏移量
-	msgExt.QueueOffset = int64(len(queueMessages) - 1)
+	// 检查是否为顺序消息
+	if store.IsOrderedMessage(msg) {
+		shardingKey := store.GetShardingKey(msg)
+		if shardingKey != "" {
+			return b.messageStore.PutOrderedMessage(msg, shardingKey)
+		}
+	}
 	
-	result := &common.SendResult{
-		SendStatus: common.SendOK,
-		MsgId:      fmt.Sprintf("%s_%d_%d", msg.Topic, msgExt.QueueId, msgExt.QueueOffset),
+	// 普通消息处理
+	result, err := b.messageStore.PutMessage(msg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to put message: %v", err)
+	}
+	
+	// 使用默认队列ID 0
+	queueId := int32(0)
+	
+	// 创建发送结果
+	sendResult := &common.SendResult{
+		SendStatus:  common.SendOK,
+		MsgId:       fmt.Sprintf("%s_%d_%d", msg.Topic, queueId, result.QueueOffset),
 		MessageQueue: &common.MessageQueue{
 			Topic:      msg.Topic,
 			BrokerName: b.config.BrokerName,
-			QueueId:    msgExt.QueueId,
+			QueueId:    queueId,
 		},
-		QueueOffset: msgExt.QueueOffset,
+		QueueOffset: result.QueueOffset,
 	}
 	
 	log.Printf("Message stored: topic=%s, queueId=%d, offset=%d", 
-		msg.Topic, msgExt.QueueId, msgExt.QueueOffset)
+		msg.Topic, queueId, result.QueueOffset)
 	
-	return result, nil
+	return sendResult, nil
 }
 
 // PullMessage 拉取消息
 func (b *Broker) PullMessage(topic string, queueId int32, offset int64, maxNums int32) ([]*common.MessageExt, error) {
-	b.messageStore.mutex.RLock()
-	defer b.messageStore.mutex.RUnlock()
-	
-	queueMessages := b.messageStore.queues[topic][queueId]
-	if queueMessages == nil || offset >= int64(len(queueMessages)) {
-		return nil, nil
-	}
-	
-	start := int(offset)
-	end := start + int(maxNums)
-	if end > len(queueMessages) {
-		end = len(queueMessages)
-	}
-	
-	result := make([]*common.MessageExt, end-start)
-	copy(result, queueMessages[start:end])
-	
-	log.Printf("Messages pulled: topic=%s, queueId=%d, offset=%d, count=%d", 
-		topic, queueId, offset, len(result))
-	
-	return result, nil
+	return b.messageStore.GetMessage(topic, queueId, offset, maxNums)
 }
 
 // CreateTopic 创建Topic
@@ -325,14 +464,6 @@ func (b *Broker) CreateTopic(topic string, queueNums int32) error {
 	}
 	
 	b.topicConfigTable[topic] = topicConfig
-	
-	// 初始化队列
-	if b.messageStore.queues[topic] == nil {
-		b.messageStore.queues[topic] = make(map[int32][]*common.MessageExt)
-		for i := int32(0); i < queueNums; i++ {
-			b.messageStore.queues[topic][i] = make([]*common.MessageExt, 0)
-		}
-	}
 	
 	log.Printf("Topic created: %s with %d queues", topic, queueNums)
 	return nil
@@ -417,18 +548,76 @@ func (b *Broker) sendSuccessResponse(conn net.Conn, response *protocol.SendMessa
 }
 
 // DefaultBrokerConfig 返回默认Broker配置
+// ========== 延迟消息相关方法 ==========
+
+// PutDelayMessage 发送延迟消息
+func (b *Broker) PutDelayMessage(msg *common.Message, delayLevel int32) (*common.SendResult, error) {
+	return b.messageStore.PutDelayMessage(msg, delayLevel)
+}
+
+// ========== 事务消息相关方法 ==========
+
+// RegisterTransactionListener 注册事务监听器
+func (b *Broker) RegisterTransactionListener(producerGroup string, listener store.TransactionListener) {
+	b.messageStore.RegisterTransactionListener(producerGroup, listener)
+}
+
+// PrepareMessage 准备事务消息
+func (b *Broker) PrepareMessage(msg *common.Message, producerGroup string, transactionId string) (*common.SendResult, error) {
+	return b.messageStore.PrepareMessage(msg, producerGroup, transactionId)
+}
+
+// CommitTransaction 提交事务
+func (b *Broker) CommitTransaction(transactionId string) error {
+	return b.messageStore.CommitTransaction(transactionId)
+}
+
+// RollbackTransaction 回滚事务
+func (b *Broker) RollbackTransaction(transactionId string) error {
+	return b.messageStore.RollbackTransaction(transactionId)
+}
+
+// ========== 顺序消息相关方法 ==========
+
+// PutOrderedMessage 发送顺序消息
+func (b *Broker) PutOrderedMessage(msg *common.Message, shardingKey string) (*common.SendResult, error) {
+	return b.messageStore.PutOrderedMessage(msg, shardingKey)
+}
+
+// PullOrderedMessage 拉取顺序消息
+func (b *Broker) PullOrderedMessage(topic string, queueId int32, consumerGroup string, maxNums int32) ([]*common.MessageExt, error) {
+	return b.messageStore.PullOrderedMessage(topic, queueId, consumerGroup, maxNums)
+}
+
+// CommitConsumeOffset 提交消费进度
+func (b *Broker) CommitConsumeOffset(topic string, queueId int32, consumerGroup string, offset int64) error {
+	return b.messageStore.CommitConsumeOffset(topic, queueId, consumerGroup, offset)
+}
+
+// GetConsumeOffset 获取消费进度
+func (b *Broker) GetConsumeOffset(topic string, queueId int32, consumerGroup string) int64 {
+	return b.messageStore.GetConsumeOffset(topic, queueId, consumerGroup)
+}
+
 func DefaultBrokerConfig() *Config {
 	return &Config{
-		BrokerName:                "DefaultBroker",
-		BrokerId:                  0,
-		ClusterName:               "DefaultCluster",
-		ListenPort:                10911,
-		NameServerAddr:            "127.0.0.1:9876",
-		StorePathRootDir:          "/tmp/rocketmq-store",
+		BrokerName:       "DefaultBroker",
+		BrokerId:         0,
+		ClusterName:      "DefaultCluster",
+		ListenPort:       10911,
+		NameServerAddr:   "127.0.0.1:9876",
+		StorePathRootDir: "/tmp/rocketmq-store",
 		SendMessageThreadPoolNums: 16,
 		PullMessageThreadPoolNums: 16,
-		FlushDiskType:             0, // ASYNC_FLUSH
-		BrokerRole:                0, // ASYNC_MASTER
-		HaListenPort:              10912,
+		FlushDiskType:    0, // ASYNC_FLUSH
+		BrokerRole:       0, // ASYNC_MASTER
+		HaListenPort:     10912,
+		ReplicationMode:  0, // ASYNC_REPLICATION
+		EnableCluster:    true,
+		ClusterManagerPort: 10913,
+		EnableFailover:   true,
+		AutoFailover:     false,
+		FailoverDelay:    30,
+		BackupBrokers:    []string{},
 	}
 }
