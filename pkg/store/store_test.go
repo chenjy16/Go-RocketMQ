@@ -625,8 +625,15 @@ func TestOrderedMessage(t *testing.T) {
 		t.Fatal("Expected result to be returned")
 	}
 	
-	// 测试拉取顺序消息
-	messages, err := store.PullOrderedMessage("OrderedTopic", 0, "TestConsumerGroup", 10)
+	// 计算shardingKey1对应的队列ID（简单哈希算法）
+	hash := uint32(0)
+	for _, b := range []byte("shardingKey1") {
+		hash = hash*31 + uint32(b)
+	}
+	queueId := int32(hash % 4) // 4个队列
+	
+	// 测试拉取顺序消息（从正确的队列拉取）
+	messages, err := store.PullOrderedMessage("OrderedTopic", queueId, "TestConsumerGroup", 10)
 	if err != nil {
 		t.Fatalf("Failed to pull ordered messages: %v", err)
 	}

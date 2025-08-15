@@ -163,6 +163,11 @@ type SendMessageRequestHeader struct {
 	ReconsumeTimes        int32  `json:"reconsumeTimes"`
 	UnitMode              bool   `json:"unitMode"`
 	Batch                 bool   `json:"batch"`
+	
+	// ACL认证字段
+	AccessKey             string `json:"accessKey,omitempty"`
+	Signature             string `json:"signature,omitempty"`
+	Timestamp             int64  `json:"timestamp,omitempty"`
 }
 
 // SendMessageResponseHeader 发送消息响应头

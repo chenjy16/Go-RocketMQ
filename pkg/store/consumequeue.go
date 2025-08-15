@@ -70,9 +70,10 @@ func (cq *ConsumeQueue) PutMessagePositionInfo(offset int64, size int32, tagsCod
 	cq.mutex.Lock()
 	defer cq.mutex.Unlock()
 	
-	// 检查偏移量是否连续
-	if cq.maxPhysicOffset >= 0 && offset < cq.maxPhysicOffset {
-		return fmt.Errorf("offset %d is less than maxPhysicOffset %d", offset, cq.maxPhysicOffset)
+	// 在并发场景下，允许乱序到达的offset，只要不是重复的即可
+	// 移除严格的顺序检查，改为只检查是否为有效offset
+	if offset < 0 {
+		return fmt.Errorf("invalid offset %d", offset)
 	}
 	
 	// 获取当前映射文件
@@ -116,7 +117,10 @@ func (cq *ConsumeQueue) PutMessagePositionInfo(offset int64, size int32, tagsCod
 	
 	// 更新索引
 	cq.lastPutIndex++
-	cq.maxPhysicOffset = offset
+	// 更新maxPhysicOffset为最大值，处理乱序到达的情况
+	if offset > cq.maxPhysicOffset {
+		cq.maxPhysicOffset = offset
+	}
 	
 	return nil
 }

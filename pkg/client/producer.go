@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -25,6 +26,8 @@ type Producer struct {
 	batchProcessor *BatchMessageProcessor
 	// 消息追踪管理器
 	traceManager *TraceManager
+	// ACL中间件
+	aclMiddleware *ACLMiddleware
 }
 
 // DelayMessageScheduler 延时消息调度器
@@ -279,6 +282,14 @@ type ProducerConfig struct {
 	RetryTimesWhenSendAsyncFailed int32 `json:"retryTimesWhenSendAsyncFailed"`
 	RetryAnotherBrokerWhenNotStoreOK bool `json:"retryAnotherBrokerWhenNotStoreOK"`
 	MaxMessageSize       int32         `json:"maxMessageSize"`
+	// ACL 配置字段
+	AccessKey            string        `json:"accessKey"`            // ACL访问密钥
+	SecretKey            string        `json:"secretKey"`            // ACL秘密密钥
+	SecurityToken        string        `json:"securityToken"`        // ACL安全令牌
+	SignatureMethod      string        `json:"signatureMethod"`      // 签名算法，默认HmacSHA1
+	EnableACL            bool          `json:"enableACL"`            // 是否启用ACL认证
+	ACLConfigPath        string        `json:"aclConfigPath"`        // ACL配置文件路径
+	ACLHotReload         bool          `json:"aclHotReload"`         // 是否启用ACL配置热重载
 }
 
 // NewProducer 创建新的生产者
@@ -308,6 +319,9 @@ func NewProducer(groupName string) *Producer {
 	// 初始化消息追踪管理器（默认不启用）
 	p.traceManager = NewTraceManager(nil)
 	p.traceManager.SetEnabled(false)
+	
+	// 初始化ACL中间件（默认不启用）
+	p.aclMiddleware = NewACLMiddleware("", "", HmacSHA1, false)
 	
 	return p
 }
@@ -343,6 +357,11 @@ func (p *Producer) Start() error {
 	// 启动消息追踪管理器
 	if p.traceManager != nil {
 		p.traceManager.Start()
+	}
+
+	// 初始化和启动ACL中间件
+	if err := p.initACLMiddleware(); err != nil {
+		return fmt.Errorf("failed to initialize ACL middleware: %v", err)
 	}
 
 	p.started = true
@@ -656,20 +675,49 @@ func (p *Producer) sendMessageToQueue(msg *Message, mq *MessageQueue, timeout ti
 		propertiesStr = string(propData)
 	}
 	
+	// 创建请求头
+	header := &SendMessageRequestHeader{
+		ProducerGroup:   p.config.GroupName,
+		Topic:          msg.Topic,
+		QueueId:        mq.QueueId,
+		SysFlag:        0,
+		BornTimestamp:  time.Now().UnixMilli(),
+		Flag:           0,
+		Properties:     propertiesStr,
+		ReconsumeTimes: 0,
+		UnitMode:       false,
+		Batch:          false,
+	}
+
+	// 添加ACL认证信息
+	if p.IsACLEnabled() {
+		authHeaders, err := p.aclMiddleware.GenerateAuthHeaders(msg.Topic, p.config.GroupName, "")
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate ACL auth headers: %v", err)
+		}
+		
+		if accessKey, ok := authHeaders["AccessKey"]; ok {
+			header.AccessKey = accessKey
+		}
+		if signature, ok := authHeaders["Signature"]; ok {
+			header.Signature = signature
+		}
+		if timestamp, ok := authHeaders["Timestamp"]; ok {
+			if ts, err := strconv.ParseInt(timestamp, 10, 64); err == nil {
+				header.Timestamp = ts
+			}
+		}
+		if signatureMethod, ok := authHeaders["SignatureMethod"]; ok {
+			header.SignatureMethod = signatureMethod
+		}
+		if securityToken, ok := authHeaders["SecurityToken"]; ok {
+			header.SecurityToken = securityToken
+		}
+	}
+
 	// 创建完整的请求，包含消息体
 	request := map[string]interface{}{
-		"header": &SendMessageRequestHeader{
-			ProducerGroup:   p.config.GroupName,
-			Topic:          msg.Topic,
-			QueueId:        mq.QueueId,
-			SysFlag:        0,
-			BornTimestamp:  time.Now().UnixMilli(),
-			Flag:           0,
-			Properties:     propertiesStr,
-			ReconsumeTimes: 0,
-			UnitMode:       false,
-			Batch:          false,
-		},
+		"header": header,
 		"body": string(msg.Body), // 将消息体作为字符串发送
 	}
 	
@@ -680,10 +728,10 @@ func (p *Producer) sendMessageToQueue(msg *Message, mq *MessageQueue, timeout ti
 	}
 	
 	// 发送请求头（包含数据长度）
-	header := make([]byte, 4)
-	binary.BigEndian.PutUint32(header, uint32(len(requestData)))
+	headerBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(headerBytes, uint32(len(requestData)))
 	
-	if _, err := conn.Write(header); err != nil {
+	if _, err := conn.Write(headerBytes); err != nil {
 		return nil, fmt.Errorf("failed to write header: %v", err)
 	}
 	
@@ -868,4 +916,79 @@ func (p *Producer) RemoveTraceHook(hookName string) {
 	if p.traceManager != nil {
 		p.traceManager.RemoveHook(hookName)
 	}
+}
+
+// initACLMiddleware 初始化ACL中间件
+func (p *Producer) initACLMiddleware() error {
+	if !p.config.EnableACL {
+		return nil
+	}
+
+	// 如果配置了ACL配置文件路径，从文件加载
+	if p.config.ACLConfigPath != "" {
+		middleware, err := NewACLMiddlewareFromConfig(p.config.ACLConfigPath, p.config.ACLHotReload)
+		if err != nil {
+			return err
+		}
+		p.aclMiddleware = middleware
+	} else {
+		// 从配置字段创建ACL中间件
+		if err := ValidateACLConfig(p.config.AccessKey, p.config.SecretKey); err != nil {
+			return err
+		}
+		
+		signatureMethod := ACLSignatureMethod(p.config.SignatureMethod)
+		if signatureMethod == "" {
+			signatureMethod = HmacSHA1
+		}
+		
+		p.aclMiddleware = NewACLMiddleware(p.config.AccessKey, p.config.SecretKey, signatureMethod, true)
+	}
+
+	return nil
+}
+
+// SetACLConfig 设置ACL配置
+func (p *Producer) SetACLConfig(accessKey, secretKey string, signatureMethod ACLSignatureMethod) error {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+
+	if err := ValidateACLConfig(accessKey, secretKey); err != nil {
+		return err
+	}
+
+	p.config.AccessKey = accessKey
+	p.config.SecretKey = secretKey
+	p.config.SignatureMethod = string(signatureMethod)
+	p.config.EnableACL = true
+
+	// 重新初始化ACL中间件
+	if p.started {
+		p.aclMiddleware = NewACLMiddleware(accessKey, secretKey, signatureMethod, true)
+	}
+
+	return nil
+}
+
+// EnableACL 启用ACL认证
+func (p *Producer) EnableACL(accessKey, secretKey string) error {
+	return p.SetACLConfig(accessKey, secretKey, HmacSHA1)
+}
+
+// DisableACL 禁用ACL认证
+func (p *Producer) DisableACL() {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+
+	p.config.EnableACL = false
+	if p.aclMiddleware != nil {
+		p.aclMiddleware.SetEnabled(false)
+	}
+}
+
+// IsACLEnabled 检查ACL是否启用
+func (p *Producer) IsACLEnabled() bool {
+	p.mutex.RLock()
+	defer p.mutex.RUnlock()
+	return p.config.EnableACL && p.aclMiddleware != nil && p.aclMiddleware.IsEnabled()
 }

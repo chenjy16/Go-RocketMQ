@@ -1,12 +1,14 @@
 package broker
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"sync"
 	"time"
 
@@ -16,6 +18,7 @@ import (
 	"go-rocketmq/pkg/ha"
 	"go-rocketmq/pkg/cluster"
 	"go-rocketmq/pkg/failover"
+	"go-rocketmq/pkg/acl"
 )
 
 // Broker 代表一个消息代理
@@ -42,6 +45,9 @@ type Broker struct {
 	haService        *ha.HAService
 	clusterManager   *cluster.ClusterManager
 	failoverService  *failover.FailoverService
+	
+	// ACL权限控制
+	aclMiddleware    *acl.AclMiddleware
 }
 
 // Config Broker配置
@@ -73,6 +79,10 @@ type Config struct {
 	AutoFailover     bool
 	FailoverDelay    int // 故障转移延迟(秒)
 	BackupBrokers    []string
+	
+	// ACL权限控制配置
+	AclEnable        bool   // 是否启用ACL
+	AclConfigFile    string // ACL配置文件路径
 }
 
 // ConsumerGroupInfo 消费者组信息
@@ -149,6 +159,18 @@ func NewBroker(config *Config) *Broker {
 	// 初始化故障转移服务
 	if config.EnableFailover && broker.clusterManager != nil {
 		broker.failoverService = failover.NewFailoverService(broker.clusterManager)
+	}
+	
+	// 初始化ACL中间件
+	if config.AclEnable {
+		aclValidator := acl.NewPlainAclValidator(config.AclConfigFile)
+		err := aclValidator.LoadConfig(config.AclConfigFile)
+		if err != nil {
+			log.Printf("Failed to load ACL config: %v", err)
+		} else {
+			broker.aclMiddleware = acl.NewAclMiddleware(aclValidator, true)
+			log.Printf("ACL middleware initialized with config file: %s", config.AclConfigFile)
+		}
 	}
 	
 	return broker
@@ -354,8 +376,104 @@ func (b *Broker) handleConnection(conn net.Conn) {
 
 // registerToNameServer 注册到NameServer
 func (b *Broker) registerToNameServer() {
-	// TODO: 实现向NameServer注册的逻辑
 	log.Printf("Registering broker %s to NameServer %s", b.config.BrokerName, b.config.NameServerAddr)
+	
+	// 构建Topic配置表
+	topicConfigTable := make(map[string]*protocol.TopicConfig)
+	b.mutex.RLock()
+	for topicName, topicConfig := range b.topicConfigTable {
+		topicConfigTable[topicName] = topicConfig
+	}
+	b.mutex.RUnlock()
+	
+	// 创建Topic配置包装器
+	topicConfigWrapper := &protocol.TopicConfigSerializeWrapper{
+		TopicConfigTable: topicConfigTable,
+		DataVersion:      protocol.NewDataVersion(),
+	}
+	
+	// 构建Broker地址
+	brokerAddr := fmt.Sprintf("localhost:%d", b.config.ListenPort)
+	haServerAddr := ""
+	if b.config.HaListenPort > 0 {
+		haServerAddr = fmt.Sprintf("localhost:%d", b.config.HaListenPort)
+	}
+	
+	// 发送注册请求到NameServer
+	if err := b.sendRegisterBrokerRequest(
+		b.config.ClusterName,
+		brokerAddr,
+		b.config.BrokerName,
+		b.config.BrokerId,
+		haServerAddr,
+		topicConfigWrapper,
+		[]string{}, // filterServerList
+	); err != nil {
+		log.Printf("Failed to register broker to NameServer: %v", err)
+		return
+	}
+	
+	log.Printf("Successfully registered broker %s to NameServer", b.config.BrokerName)
+}
+
+// sendRegisterBrokerRequest 发送注册请求到NameServer
+func (b *Broker) sendRegisterBrokerRequest(
+	clusterName string,
+	brokerAddr string,
+	brokerName string,
+	brokerId int64,
+	haServerAddr string,
+	topicConfigWrapper *protocol.TopicConfigSerializeWrapper,
+	filterServerList []string,
+) error {
+	// 构建注册请求数据
+	requestData := map[string]interface{}{
+		"clusterName":         clusterName,
+		"brokerAddr":          brokerAddr,
+		"brokerName":          brokerName,
+		"brokerId":            brokerId,
+		"haServerAddr":        haServerAddr,
+		"topicConfigWrapper":  topicConfigWrapper,
+		"filterServerList":    filterServerList,
+	}
+	
+	// 序列化请求数据
+	requestBody, err := json.Marshal(requestData)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request data: %v", err)
+	}
+	
+	// 构建NameServer URL
+	nameServerURL := fmt.Sprintf("http://%s/broker/register", b.config.NameServerAddr)
+	
+	// 发送HTTP POST请求
+	resp, err := http.Post(nameServerURL, "application/json", bytes.NewBuffer(requestBody))
+	if err != nil {
+		return fmt.Errorf("failed to send register request: %v", err)
+	}
+	defer resp.Body.Close()
+	
+	// 检查响应状态
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("register request failed with status: %d", resp.StatusCode)
+	}
+	
+	// 读取响应体
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response body: %v", err)
+	}
+	
+	// 解析响应
+	var result protocol.RegisterBrokerResult
+	if err := json.Unmarshal(responseBody, &result); err != nil {
+		return fmt.Errorf("failed to unmarshal response: %v", err)
+	}
+	
+	log.Printf("Broker registration response: HaServerAddr=%s, MasterAddr=%s", 
+		result.HaServerAddr, result.MasterAddr)
+	
+	return nil
 }
 
 // sendHeartbeatToNameServer 向NameServer发送心跳
@@ -368,10 +486,52 @@ func (b *Broker) sendHeartbeatToNameServer() {
 		case <-b.shutdown:
 			return
 		case <-ticker.C:
-			// TODO: 发送心跳到NameServer
 			log.Printf("Sending heartbeat to NameServer")
+			
+			// 发送心跳请求
+			if err := b.sendHeartbeatRequest(); err != nil {
+				log.Printf("Failed to send heartbeat to NameServer: %v", err)
+			} else {
+				log.Printf("Successfully sent heartbeat to NameServer")
+			}
 		}
 	}
+}
+
+// sendHeartbeatRequest 发送心跳请求到NameServer
+func (b *Broker) sendHeartbeatRequest() error {
+	// 构建心跳数据
+	heartbeatData := map[string]interface{}{
+		"brokerName":   b.config.BrokerName,
+		"brokerId":     b.config.BrokerId,
+		"brokerAddr":   fmt.Sprintf("localhost:%d", b.config.ListenPort),
+		"clusterName":  b.config.ClusterName,
+		"timestamp":    time.Now().UnixMilli(),
+		"dataVersion":  protocol.NewDataVersion(),
+	}
+	
+	// 序列化心跳数据
+	heartbeatBody, err := json.Marshal(heartbeatData)
+	if err != nil {
+		return fmt.Errorf("failed to marshal heartbeat data: %v", err)
+	}
+	
+	// 构建NameServer URL
+	nameServerURL := fmt.Sprintf("http://%s/broker/heartbeat", b.config.NameServerAddr)
+	
+	// 发送HTTP POST请求
+	resp, err := http.Post(nameServerURL, "application/json", bytes.NewBuffer(heartbeatBody))
+	if err != nil {
+		return fmt.Errorf("failed to send heartbeat request: %v", err)
+	}
+	defer resp.Body.Close()
+	
+	// 检查响应状态
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("heartbeat request failed with status: %d", resp.StatusCode)
+	}
+	
+	return nil
 }
 
 // getBrokerRoleString 获取Broker角色字符串
@@ -479,6 +639,29 @@ func (b *Broker) GetTopicConfig(topic string) *protocol.TopicConfig {
 
 // handleSendMessage 处理发送消息请求
 func (b *Broker) handleSendMessage(conn net.Conn, request *protocol.SendMessageRequestHeader, messageBody string) {
+	// ACL权限验证
+	if b.aclMiddleware != nil && b.aclMiddleware.IsAclEnabled() {
+		// 构造请求数据用于验证
+		requestData := map[string]string{
+			"topic":      request.Topic,
+			"operation":  "PUB",
+			"accessKey":  request.AccessKey,
+			"signature":  request.Signature,
+			"timestamp":  fmt.Sprintf("%d", request.Timestamp),
+		}
+		
+		// 获取远程地址
+		remoteAddr := conn.RemoteAddr().String()
+		
+		// 验证生产者权限
+		_, err := b.aclMiddleware.ValidateProducerRequest(requestData, request.Topic, remoteAddr)
+		if err != nil {
+			log.Printf("ACL validation failed for producer: %v", err)
+			b.sendErrorResponse(conn, fmt.Sprintf("Access denied: %v", err))
+			return
+		}
+	}
+	
 	// 创建消息对象
 	msg := &common.Message{
 		Topic:      request.Topic,
@@ -599,6 +782,49 @@ func (b *Broker) GetConsumeOffset(topic string, queueId int32, consumerGroup str
 	return b.messageStore.GetConsumeOffset(topic, queueId, consumerGroup)
 }
 
+// IsAclEnabled 检查ACL是否启用
+func (b *Broker) IsAclEnabled() bool {
+	return b.config.AclEnable && b.aclMiddleware != nil
+}
+
+// SetAclEnabled 设置ACL启用状态
+func (b *Broker) SetAclEnabled(enabled bool) {
+	b.config.AclEnable = enabled
+}
+
+// ReloadAclConfig 重新加载ACL配置
+func (b *Broker) ReloadAclConfig() error {
+	if !b.config.AclEnable || b.aclMiddleware == nil {
+		return fmt.Errorf("ACL is not enabled")
+	}
+	
+	aclValidator := acl.NewPlainAclValidator(b.config.AclConfigFile)
+	err := aclValidator.LoadConfig(b.config.AclConfigFile)
+	if err != nil {
+		return fmt.Errorf("failed to reload ACL config: %v", err)
+	}
+	
+	b.aclMiddleware = acl.NewAclMiddleware(aclValidator, true)
+	log.Printf("ACL config reloaded from: %s", b.config.AclConfigFile)
+	return nil
+}
+
+// ValidateTopicAccess 验证Topic访问权限
+func (b *Broker) ValidateTopicAccess(requestData map[string]string, topic, operation, remoteAddr string) error {
+	if !b.IsAclEnabled() {
+		return nil // ACL未启用，允许访问
+	}
+	
+	// 先进行认证
+	account, err := b.aclMiddleware.AuthenticateRequest(requestData, remoteAddr)
+	if err != nil {
+		return fmt.Errorf("authentication failed: %v", err)
+	}
+	
+	// 检查Topic权限
+	return b.aclMiddleware.CheckTopicPermission(account, topic, operation, remoteAddr)
+}
+
 func DefaultBrokerConfig() *Config {
 	return &Config{
 		BrokerName:       "DefaultBroker",
@@ -619,5 +845,7 @@ func DefaultBrokerConfig() *Config {
 		AutoFailover:     false,
 		FailoverDelay:    30,
 		BackupBrokers:    []string{},
+		AclEnable:        false,
+		AclConfigFile:    "config/plain_acl.yml",
 	}
 }

@@ -1,6 +1,8 @@
 package client
 
 import (
+	"bytes"
+	"encoding/binary"
 	"fmt"
 	"sync"
 	"time"
@@ -249,13 +251,13 @@ func (p *Producer) SendBatchMessages(messages []*Message) (*SendResult, error) {
 		}
 	}
 	
-	// 计算总大小
-	totalSize := 0
-	for _, msg := range messages {
-		totalSize += len(msg.Body)
+	// 使用复杂的批量消息编码格式
+	batchBody, err := p.encodeBatchMessages(messages)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode batch messages: %v", err)
 	}
 	
-	if totalSize > int(p.config.MaxMessageSize) {
+	if len(batchBody) > int(p.config.MaxMessageSize) {
 		return nil, fmt.Errorf("batch messages size exceeds limit: %d", p.config.MaxMessageSize)
 	}
 	
@@ -263,22 +265,232 @@ func (p *Producer) SendBatchMessages(messages []*Message) (*SendResult, error) {
 	batchMsg := &Message{
 		Topic:      topic,
 		Properties: make(map[string]string),
+		Body:       batchBody,
 	}
 	batchMsg.SetProperty("BATCH_MESSAGE", "true")
 	batchMsg.SetProperty("BATCH_SIZE", fmt.Sprintf("%d", len(messages)))
-	
-	// 简化实现：将所有消息体合并
-	// 实际实现中应该使用更复杂的编码格式
-	var batchBody []byte
-	for i, msg := range messages {
-		if i > 0 {
-			batchBody = append(batchBody, '|') // 使用|作为分隔符
-		}
-		batchBody = append(batchBody, msg.Body...)
-	}
-	batchMsg.Body = batchBody
+	batchMsg.SetProperty("BATCH_ENCODING", "ROCKETMQ_V1")
 	
 	return p.SendSync(batchMsg)
+}
+
+// encodeBatchMessages 编码批量消息，使用类似RocketMQ的复杂编码格式
+func (p *Producer) encodeBatchMessages(messages []*Message) ([]byte, error) {
+	var buffer bytes.Buffer
+	
+	// 写入批量消息头部信息
+	header := &BatchMessageHeader{
+		Magic:        0x12345678, // 魔数
+		Version:      1,          // 版本号
+		MessageCount: int32(len(messages)),
+		Timestamp:    time.Now().UnixMilli(),
+	}
+	
+	if err := p.writeBatchHeader(&buffer, header); err != nil {
+		return nil, fmt.Errorf("failed to write batch header: %v", err)
+	}
+	
+	// 编码每个消息
+	for i, msg := range messages {
+		encodedMsg, err := p.encodeMessage(msg, int32(i))
+		if err != nil {
+			return nil, fmt.Errorf("failed to encode message %d: %v", i, err)
+		}
+		
+		// 写入消息长度（4字节）
+		if err := binary.Write(&buffer, binary.BigEndian, int32(len(encodedMsg))); err != nil {
+			return nil, fmt.Errorf("failed to write message length: %v", err)
+		}
+		
+		// 写入消息数据
+		if _, err := buffer.Write(encodedMsg); err != nil {
+			return nil, fmt.Errorf("failed to write message data: %v", err)
+		}
+	}
+	
+	return buffer.Bytes(), nil
+}
+
+// BatchMessageHeader 批量消息头部
+type BatchMessageHeader struct {
+	Magic        int32 // 魔数，用于识别批量消息格式
+	Version      int32 // 版本号
+	MessageCount int32 // 消息数量
+	Timestamp    int64 // 时间戳
+}
+
+// writeBatchHeader 写入批量消息头部
+func (p *Producer) writeBatchHeader(buffer *bytes.Buffer, header *BatchMessageHeader) error {
+	if err := binary.Write(buffer, binary.BigEndian, header.Magic); err != nil {
+		return err
+	}
+	if err := binary.Write(buffer, binary.BigEndian, header.Version); err != nil {
+		return err
+	}
+	if err := binary.Write(buffer, binary.BigEndian, header.MessageCount); err != nil {
+		return err
+	}
+	if err := binary.Write(buffer, binary.BigEndian, header.Timestamp); err != nil {
+		return err
+	}
+	return nil
+}
+
+// encodeMessage 编码单个消息
+func (p *Producer) encodeMessage(msg *Message, index int32) ([]byte, error) {
+	var buffer bytes.Buffer
+	
+	// 消息头部
+	msgHeader := &MessageHeader{
+		Index:      index,
+		BodyLength: int32(len(msg.Body)),
+		Flag:       p.calculateMessageFlag(msg),
+		Timestamp:  time.Now().UnixMilli(),
+	}
+	
+	// 写入消息头部
+	if err := p.writeMessageHeader(&buffer, msgHeader); err != nil {
+		return nil, fmt.Errorf("failed to write message header: %v", err)
+	}
+	
+	// 写入Topic长度和内容
+	topicBytes := []byte(msg.Topic)
+	if err := binary.Write(&buffer, binary.BigEndian, int16(len(topicBytes))); err != nil {
+		return nil, err
+	}
+	if _, err := buffer.Write(topicBytes); err != nil {
+		return nil, err
+	}
+	
+	// 写入Tags（如果存在）
+	tags := msg.Tags
+	tagsBytes := []byte(tags)
+	if err := binary.Write(&buffer, binary.BigEndian, int16(len(tagsBytes))); err != nil {
+		return nil, err
+	}
+	if len(tagsBytes) > 0 {
+		if _, err := buffer.Write(tagsBytes); err != nil {
+			return nil, err
+		}
+	}
+	
+	// 写入Keys（如果存在）
+	keys := msg.Keys
+	keysBytes := []byte(keys)
+	if err := binary.Write(&buffer, binary.BigEndian, int16(len(keysBytes))); err != nil {
+		return nil, err
+	}
+	if len(keysBytes) > 0 {
+		if _, err := buffer.Write(keysBytes); err != nil {
+			return nil, err
+		}
+	}
+	
+	// 写入Properties
+	propertiesData, err := p.encodeProperties(msg.Properties)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode properties: %v", err)
+	}
+	if err := binary.Write(&buffer, binary.BigEndian, int32(len(propertiesData))); err != nil {
+		return nil, err
+	}
+	if len(propertiesData) > 0 {
+		if _, err := buffer.Write(propertiesData); err != nil {
+			return nil, err
+		}
+	}
+	
+	// 写入消息体
+	if _, err := buffer.Write(msg.Body); err != nil {
+		return nil, err
+	}
+	
+	return buffer.Bytes(), nil
+}
+
+// MessageHeader 消息头部
+type MessageHeader struct {
+	Index      int32 // 消息在批次中的索引
+	BodyLength int32 // 消息体长度
+	Flag       int32 // 消息标志
+	Timestamp  int64 // 时间戳
+}
+
+// writeMessageHeader 写入消息头部
+func (p *Producer) writeMessageHeader(buffer *bytes.Buffer, header *MessageHeader) error {
+	if err := binary.Write(buffer, binary.BigEndian, header.Index); err != nil {
+		return err
+	}
+	if err := binary.Write(buffer, binary.BigEndian, header.BodyLength); err != nil {
+		return err
+	}
+	if err := binary.Write(buffer, binary.BigEndian, header.Flag); err != nil {
+		return err
+	}
+	if err := binary.Write(buffer, binary.BigEndian, header.Timestamp); err != nil {
+		return err
+	}
+	return nil
+}
+
+// calculateMessageFlag 计算消息标志
+func (p *Producer) calculateMessageFlag(msg *Message) int32 {
+	var flag int32 = 0
+	
+	// 检查消息类型
+	if msg.IsTransactionMessage() {
+		flag |= 0x01 // 事务消息标志
+	}
+	if msg.IsDelayMessage() {
+		flag |= 0x02 // 延迟消息标志
+	}
+	if msg.IsOrderedMessage() {
+		flag |= 0x04 // 顺序消息标志
+	}
+	
+	// 检查压缩
+	if len(msg.Body) > 4096 { // 大于4KB的消息考虑压缩
+		flag |= 0x08 // 压缩标志
+	}
+	
+	return flag
+}
+
+// encodeProperties 编码消息属性
+func (p *Producer) encodeProperties(properties map[string]string) ([]byte, error) {
+	if len(properties) == 0 {
+		return nil, nil
+	}
+	
+	var buffer bytes.Buffer
+	
+	// 写入属性数量
+	if err := binary.Write(&buffer, binary.BigEndian, int32(len(properties))); err != nil {
+		return nil, err
+	}
+	
+	// 写入每个属性
+	for key, value := range properties {
+		// 写入key长度和内容
+		keyBytes := []byte(key)
+		if err := binary.Write(&buffer, binary.BigEndian, int16(len(keyBytes))); err != nil {
+			return nil, err
+		}
+		if _, err := buffer.Write(keyBytes); err != nil {
+			return nil, err
+		}
+		
+		// 写入value长度和内容
+		valueBytes := []byte(value)
+		if err := binary.Write(&buffer, binary.BigEndian, int16(len(valueBytes))); err != nil {
+			return nil, err
+		}
+		if _, err := buffer.Write(valueBytes); err != nil {
+			return nil, err
+		}
+	}
+	
+	return buffer.Bytes(), nil
 }
 
 // DefaultMessageQueueSelector 默认消息队列选择器

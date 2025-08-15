@@ -1,0 +1,95 @@
+# Go-RocketMQ ACL权限控制配置文件
+# 基于Apache RocketMQ ACL配置格式
+
+# 全局白名单IP地址
+# 这些地址可以无需认证直接访问
+globalWhiteRemoteAddresses:
+  - "127.0.0.1"
+  - "localhost"
+  - "::1"
+
+# 账户配置
+accounts:
+  # 管理员账户
+  - accessKey: "RocketMQ"
+    secretKey: "12345678"
+    whiteRemoteAddress: "*"  # 允许所有IP地址
+    admin: true              # 管理员权限
+    defaultTopicPerm: "DENY" # 默认Topic权限
+    defaultGroupPerm: "DENY" # 默认Group权限
+    topicPerms:
+      - "TopicTest=PUB|SUB"   # 测试Topic的发布和订阅权限
+      - "OrderTopic=PUB|SUB"  # 订单Topic的发布和订阅权限
+    groupPerms:
+      - "GroupTest=SUB"       # 测试Group的订阅权限
+      - "OrderGroup=SUB"      # 订单Group的订阅权限
+
+  # 普通生产者账户
+  - accessKey: "producer"
+    secretKey: "producer123"
+    whiteRemoteAddress: "192.168.1.*"  # 只允许内网访问
+    admin: false
+    defaultTopicPerm: "DENY"
+    defaultGroupPerm: "DENY"
+    topicPerms:
+      - "TopicTest=PUB"       # 只有发布权限
+      - "OrderTopic=PUB"      # 只有发布权限
+    groupPerms: []
+
+  # 普通消费者账户
+  - accessKey: "consumer"
+    secretKey: "consumer123"
+    whiteRemoteAddress: "192.168.1.*"  # 只允许内网访问
+    admin: false
+    defaultTopicPerm: "DENY"
+    defaultGroupPerm: "DENY"
+    topicPerms:
+      - "TopicTest=SUB"       # 只有订阅权限
+      - "OrderTopic=SUB"      # 只有订阅权限
+    groupPerms:
+      - "GroupTest=SUB"       # 订阅权限
+      - "OrderGroup=SUB"      # 订阅权限
+
+  # 开发环境账户（拥有更多权限）
+  - accessKey: "developer"
+    secretKey: "dev123456"
+    whiteRemoteAddress: "10.0.0.0/8"   # CIDR格式的IP范围
+    admin: false
+    defaultTopicPerm: "SUB"             # 默认有订阅权限
+    defaultGroupPerm: "SUB"             # 默认有订阅权限
+    topicPerms:
+      - "DevTopic=PUB|SUB"    # 开发Topic的完整权限
+      - "TestTopic=PUB|SUB"   # 测试Topic的完整权限
+    groupPerms:
+      - "DevGroup=SUB"        # 开发Group权限
+      - "TestGroup=SUB"       # 测试Group权限
+
+  # 监控账户（只读权限）
+  - accessKey: "monitor"
+    secretKey: "monitor123"
+    whiteRemoteAddress: ""              # 空字符串表示允许所有IP
+    admin: false
+    defaultTopicPerm: "SUB"             # 默认只有订阅权限
+    defaultGroupPerm: "SUB"             # 默认只有订阅权限
+    topicPerms:
+      - "MonitorTopic=SUB"    # 监控Topic订阅权限
+    groupPerms:
+      - "MonitorGroup=SUB"    # 监控Group权限
+
+# 权限说明：
+# DENY - 拒绝访问
+# PUB - 发布权限（生产者）
+# SUB - 订阅权限（消费者）
+# PUB|SUB - 发布和订阅权限
+#
+# IP地址格式支持：
+# - 精确匹配：192.168.1.100
+# - 通配符：192.168.1.*
+# - CIDR：192.168.1.0/24
+# - 空字符串或*：允许所有IP
+#
+# 注意事项：
+# 1. admin为true的账户拥有所有权限，忽略其他权限设置
+# 2. 全局白名单地址无需认证即可访问
+# 3. 如果Topic或Group没有明确权限设置，使用默认权限
+# 4. 权限检查顺序：全局白名单 -> 账户白名单 -> 签名验证 -> 权限检查

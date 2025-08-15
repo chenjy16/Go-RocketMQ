@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"go-rocketmq/pkg/acl"
 	"go-rocketmq/pkg/common"
 	"go-rocketmq/pkg/protocol"
 )
@@ -17,6 +18,7 @@ type NameServer struct {
 	routeTable   *RouteInfoManager
 	brokerLiveTable map[string]*BrokerLiveInfo
 	filterServerTable map[string][]string
+	aclMiddleware *acl.AclMiddleware
 	mutex        sync.RWMutex
 	listener     net.Listener
 	shutdown     chan struct{}
@@ -28,6 +30,8 @@ type Config struct {
 	ClusterTestEnable         bool          `json:"clusterTestEnable"`
 	OrderMessageEnable        bool          `json:"orderMessageEnable"`
 	ScanNotActiveBrokerInterval time.Duration `json:"scanNotActiveBrokerInterval"`
+	AclEnable                 bool          `json:"aclEnable"`
+	AclConfigFile             string        `json:"aclConfigFile"`
 }
 
 // BrokerLiveInfo Broker存活信息
@@ -50,13 +54,21 @@ type RouteInfoManager struct {
 
 // NewNameServer 创建NameServer实例
 func NewNameServer(config *Config) *NameServer {
-	return &NameServer{
+	ns := &NameServer{
 		config:            config,
 		routeTable:        NewRouteInfoManager(),
 		brokerLiveTable:   make(map[string]*BrokerLiveInfo),
 		filterServerTable: make(map[string][]string),
 		shutdown:          make(chan struct{}),
 	}
+	
+	// 初始化ACL中间件
+	if config.AclEnable {
+		validator := acl.NewPlainAclValidator(config.AclConfigFile)
+		ns.aclMiddleware = acl.NewAclMiddleware(validator, true)
+	}
+	
+	return ns
 }
 
 // NewRouteInfoManager 创建路由信息管理器
@@ -125,11 +137,19 @@ func (ns *NameServer) handleConnections() {
 func (ns *NameServer) handleConnection(conn net.Conn) {
 	defer conn.Close()
 	
-	// 这里应该实现RocketMQ的通信协议
-	// 简化版本，实际需要实现完整的协议解析
-	log.Printf("New connection from %s", conn.RemoteAddr())
+	remoteAddr := conn.RemoteAddr().String()
+	log.Printf("New connection from %s", remoteAddr)
 	
-	// TODO: 实现协议处理逻辑
+	// ACL权限验证
+	if ns.config.AclEnable && ns.aclMiddleware != nil {
+		if err := ns.validateConnection(conn, remoteAddr); err != nil {
+			log.Printf("ACL validation failed for %s: %v", remoteAddr, err)
+			return
+		}
+	}
+	
+	// TODO: 实现完整的协议处理逻辑
+	// 这里应该实现RocketMQ的通信协议解析和处理
 }
 
 // RegisterBroker 注册Broker
@@ -143,6 +163,29 @@ func (ns *NameServer) RegisterBroker(
 	filterServerList []string,
 	channel net.Conn,
 ) *protocol.RegisterBrokerResult {
+	
+	// ACL权限验证
+	if ns.config.AclEnable && ns.aclMiddleware != nil {
+		remoteAddr := ""
+		if channel != nil {
+			remoteAddr = channel.RemoteAddr().String()
+		}
+		
+		requestData := map[string]string{
+			"clusterName": clusterName,
+			"brokerName":  brokerName,
+			"brokerAddr":  brokerAddr,
+			"operation":   "REGISTER_BROKER",
+		}
+		
+		if err := ns.ValidateTopicAccess(requestData, "BROKER_REGISTER", "ADMIN", remoteAddr); err != nil {
+			log.Printf("ACL validation failed for broker registration from %s: %v", remoteAddr, err)
+			return &protocol.RegisterBrokerResult{
+				HaServerAddr: "",
+				MasterAddr:   "",
+			}
+		}
+	}
 	
 	ns.mutex.Lock()
 	defer ns.mutex.Unlock()
@@ -363,6 +406,60 @@ func (ns *NameServer) GetAllClusterInfo() *protocol.ClusterInfo {
 	return clusterInfo
 }
 
+// validateConnection 验证连接的ACL权限
+func (ns *NameServer) validateConnection(conn net.Conn, remoteAddr string) error {
+	if ns.aclMiddleware == nil {
+		return fmt.Errorf("ACL middleware not initialized")
+	}
+	
+	// 简化的请求数据，实际应该从协议中解析
+	requestData := map[string]string{
+		"remoteAddress": remoteAddr,
+		"operation":     "CONNECT",
+	}
+	
+	// 进行管理员请求验证（连接验证）
+	_, err := ns.aclMiddleware.ValidateAdminRequest(requestData, remoteAddr)
+	return err
+}
+
+// ValidateTopicAccess 验证Topic访问权限
+func (ns *NameServer) ValidateTopicAccess(requestData map[string]string, topicName, operation, remoteAddr string) error {
+	if !ns.config.AclEnable || ns.aclMiddleware == nil {
+		return nil
+	}
+	
+	switch operation {
+	case "PUB":
+		_, err := ns.aclMiddleware.ValidateProducerRequest(requestData, topicName, remoteAddr)
+		return err
+	case "SUB":
+		// 对于订阅，需要groupName，这里简化处理
+		groupName := requestData["groupName"]
+		if groupName == "" {
+			groupName = "DEFAULT_GROUP"
+		}
+		_, err := ns.aclMiddleware.ValidateConsumerRequest(requestData, topicName, groupName, remoteAddr)
+		return err
+	default:
+		_, err := ns.aclMiddleware.ValidateAdminRequest(requestData, remoteAddr)
+		return err
+	}
+}
+
+// IsAclEnabled 检查ACL是否启用
+func (ns *NameServer) IsAclEnabled() bool {
+	return ns.config.AclEnable && ns.aclMiddleware != nil
+}
+
+// ReloadAclConfig 重新加载ACL配置
+func (ns *NameServer) ReloadAclConfig() error {
+	if !ns.config.AclEnable || ns.aclMiddleware == nil {
+		return fmt.Errorf("ACL is not enabled")
+	}
+	return ns.aclMiddleware.ReloadConfig()
+}
+
 // DefaultConfig 返回默认配置
 func DefaultConfig() *Config {
 	return &Config{
@@ -370,5 +467,7 @@ func DefaultConfig() *Config {
 		ClusterTestEnable:           false,
 		OrderMessageEnable:          false,
 		ScanNotActiveBrokerInterval: 5 * time.Second,
+		AclEnable:                   false,
+		AclConfigFile:               "config/plain_acl.yml",
 	}
 }

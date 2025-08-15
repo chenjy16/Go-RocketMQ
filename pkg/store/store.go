@@ -3,7 +3,10 @@ package store
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go-rocketmq/pkg/common"
@@ -57,22 +60,25 @@ const (
 type DefaultMessageStore struct {
 	storeConfig *StoreConfig
 	
-	// 核心存储组件
+	// 存储组件
 	commitLog     *CommitLog
 	consumeQueueTable map[string]*ConsumeQueue // topic -> ConsumeQueue
 	indexService  *IndexService
 	
-	// 新增功能服务
+	// 高级功能服务
 	delayQueueService    *DelayQueueService
 	transactionService   *TransactionService
 	orderedQueueService  *OrderedQueueService
 	
-	// 运行状态
+	// 控制字段
 	running bool
 	mutex   sync.RWMutex
 	
 	// 停止信号
 	shutdown chan struct{}
+	
+	// 队列选择计数器
+	queueSelector int32
 }
 
 // NewDefaultMessageStore 创建默认消息存储
@@ -169,6 +175,11 @@ func (store *DefaultMessageStore) Start() error {
 		return fmt.Errorf("message store is already running")
 	}
 	
+	// 恢复ConsumeQueue
+	if err := store.recoverConsumeQueues(); err != nil {
+		return fmt.Errorf("failed to recover consume queues: %v", err)
+	}
+	
 	// 启动CommitLog
 	if err := store.commitLog.Start(); err != nil {
 		return fmt.Errorf("failed to start commit log: %v", err)
@@ -231,6 +242,13 @@ func (store *DefaultMessageStore) Shutdown() {
 
 // PutMessage 存储消息
 func (store *DefaultMessageStore) PutMessage(msg *common.Message) (*common.SendResult, error) {
+	// 选择队列ID（轮询方式）
+	queueId := atomic.AddInt32(&store.queueSelector, 1) % 4 // 使用4个队列
+	return store.PutMessageToQueue(msg, queueId)
+}
+
+// PutMessageToQueue 将消息存储到指定队列
+func (store *DefaultMessageStore) PutMessageToQueue(msg *common.Message, queueId int32) (*common.SendResult, error) {
 	if !store.running {
 		return nil, fmt.Errorf("message store is not running")
 	}
@@ -246,7 +264,7 @@ func (store *DefaultMessageStore) PutMessage(msg *common.Message) (*common.SendR
 	// 构建消息扩展信息
 	msgExt := &common.MessageExt{
 		Message:        msg,
-		QueueId:        0, // 简化版本，使用固定队列ID
+		QueueId:        queueId,
 		StoreSize:      0, // 将在CommitLog中计算
 		QueueOffset:    0, // 将在ConsumeQueue中计算
 		SysFlag:        0,
@@ -360,10 +378,14 @@ func (store *DefaultMessageStore) GetMessage(topic string, queueId int32, offset
 		return nil, fmt.Errorf("message store is not running")
 	}
 	
-	// 获取ConsumeQueue
-	cq := store.getOrCreateConsumeQueue(topic, queueId)
-	if cq == nil {
-		return nil, fmt.Errorf("consume queue not found for topic %s, queueId %d", topic, queueId)
+	// 检查ConsumeQueue是否存在（不自动创建）
+	store.mutex.RLock()
+	key := fmt.Sprintf("%s-%d", topic, queueId)
+	cq, exists := store.consumeQueueTable[key]
+	store.mutex.RUnlock()
+	
+	if !exists {
+		return nil, fmt.Errorf("topic %s with queueId %d not found", topic, queueId)
 	}
 	
 	var messages []*common.MessageExt
@@ -458,4 +480,53 @@ func (store *DefaultMessageStore) GetConsumeOffset(topic string, queueId int32, 
 // GetCommitLog 获取CommitLog实例
 func (store *DefaultMessageStore) GetCommitLog() *CommitLog {
 	return store.commitLog
+}
+
+// recoverConsumeQueues 恢复ConsumeQueue
+func (store *DefaultMessageStore) recoverConsumeQueues() error {
+	// 扫描ConsumeQueue目录
+	consumeQueueDir := store.storeConfig.StorePathConsumeQueue
+	topicDirs, err := os.ReadDir(consumeQueueDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // 目录不存在，跳过恢复
+		}
+		return fmt.Errorf("failed to read consume queue directory: %v", err)
+	}
+	
+	for _, topicDir := range topicDirs {
+		if !topicDir.IsDir() {
+			continue
+		}
+		
+		topicName := topicDir.Name()
+		topicPath := filepath.Join(consumeQueueDir, topicName)
+		
+		queueDirs, err := os.ReadDir(topicPath)
+		if err != nil {
+			continue
+		}
+		
+		for _, queueDir := range queueDirs {
+			if !queueDir.IsDir() {
+				continue
+			}
+			
+			// 解析queueId
+			queueId, err := strconv.ParseInt(queueDir.Name(), 10, 32)
+			if err != nil {
+				continue
+			}
+			
+			// 创建ConsumeQueue并恢复
+			cq := NewConsumeQueue(topicName, int32(queueId), store.storeConfig.StorePathConsumeQueue, store.storeConfig.MapedFileSizeConsumeQueue)
+			cq.Recover()
+			
+			// 添加到表中
+			key := fmt.Sprintf("%s-%d", topicName, queueId)
+			store.consumeQueueTable[key] = cq
+		}
+	}
+	
+	return nil
 }

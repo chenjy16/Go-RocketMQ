@@ -94,8 +94,8 @@ func (oqs *OrderedQueueService) PutOrderedMessage(msg *common.Message, shardingK
 	queueLock.Lock()
 	defer queueLock.Unlock()
 
-	// 存储消息
-	result, err := oqs.messageStore.PutMessage(msg)
+	// 存储消息到指定队列
+	result, err := oqs.messageStore.PutMessageToQueue(msg, queueId)
 	if err != nil {
 		return nil, fmt.Errorf("failed to put ordered message: %v", err)
 	}
