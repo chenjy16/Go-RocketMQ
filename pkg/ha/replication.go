@@ -52,6 +52,7 @@ type HAService struct {
 	running        int32
 	mutex          sync.RWMutex
 	shutdown       chan struct{}
+	wg             sync.WaitGroup
 
 	// Master相关
 	haListener     net.Listener
@@ -113,6 +114,9 @@ func (ha *HAService) Start() error {
 		return fmt.Errorf("HA service already running")
 	}
 
+	// 重新初始化shutdown channel
+	ha.shutdown = make(chan struct{})
+
 	log.Printf("Starting HA service with role: %v, mode: %v", ha.config.BrokerRole, ha.config.ReplicationMode)
 
 	switch ha.config.BrokerRole {
@@ -137,9 +141,11 @@ func (ha *HAService) startMaster() error {
 	log.Printf("HA Master listening on %s", addr)
 
 	// 启动接受连接的goroutine
+	ha.wg.Add(1)
 	go ha.acceptSlaveConnections()
 
 	// 启动数据推送goroutine
+	ha.wg.Add(1)
 	go ha.pushDataToSlaves()
 
 	return nil
@@ -154,6 +160,7 @@ func (ha *HAService) startSlave() error {
 	log.Printf("HA Slave connecting to master: %s", ha.config.HaMasterAddress)
 
 	// 启动连接主节点的goroutine
+	ha.wg.Add(1)
 	go ha.connectToMaster()
 
 	return nil
@@ -161,6 +168,8 @@ func (ha *HAService) startSlave() error {
 
 // acceptSlaveConnections 接受从节点连接
 func (ha *HAService) acceptSlaveConnections() {
+	defer ha.wg.Done()
+	
 	for {
 		select {
 		case <-ha.shutdown:
@@ -168,8 +177,14 @@ func (ha *HAService) acceptSlaveConnections() {
 		default:
 			conn, err := ha.haListener.Accept()
 			if err != nil {
-				log.Printf("Failed to accept slave connection: %v", err)
-				continue
+				// 检查是否是因为服务关闭导致的错误
+				select {
+				case <-ha.shutdown:
+					return
+				default:
+					log.Printf("Failed to accept slave connection: %v", err)
+					continue
+				}
 			}
 
 			slaveAddr := conn.RemoteAddr().String()
@@ -303,6 +318,8 @@ func (ha *HAService) sendDataPacket(conn net.Conn, offset int64, data []byte) er
 
 // connectToMaster 连接到主节点
 func (ha *HAService) connectToMaster() {
+	defer ha.wg.Done()
+	
 	for {
 		select {
 		case <-ha.shutdown:
@@ -455,6 +472,8 @@ func (ha *HAService) sendSlaveRequest(conn net.Conn, offset int64) error {
 
 // pushDataToSlaves 推送数据到从节点
 func (ha *HAService) pushDataToSlaves() {
+	defer ha.wg.Done()
+	
 	ticker := time.NewTicker(100 * time.Millisecond) // 100ms检查一次
 	defer ticker.Stop()
 
@@ -547,9 +566,11 @@ func (ha *HAService) Shutdown() {
 	}
 
 	log.Printf("Shutting down HA service")
+	
+	// 先发送关闭信号
 	close(ha.shutdown)
-
-	// 关闭监听器
+	
+	// 然后关闭监听器，阻止新连接
 	if ha.haListener != nil {
 		ha.haListener.Close()
 	}
@@ -567,6 +588,11 @@ func (ha *HAService) Shutdown() {
 		ha.masterConnection.running = false
 		ha.masterConnection.conn.Close()
 	}
+	
+	// 等待所有goroutine完成
+	ha.wg.Wait()
+	
+	log.Printf("HA service shutdown completed")
 }
 
 // GetReplicationStatus 获取复制状态

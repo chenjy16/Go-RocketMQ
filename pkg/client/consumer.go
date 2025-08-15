@@ -17,6 +17,10 @@ type Consumer struct {
 	started         bool
 	shutdown        chan struct{}
 	wg              sync.WaitGroup
+	rebalanceService *RebalanceService
+	loadBalanceStrategy LoadBalanceStrategy
+	// 消息追踪管理器
+	traceManager *TraceManager
 }
 
 // ConsumerConfig 消费者配置
@@ -37,6 +41,7 @@ type Subscription struct {
 	Topic      string
 	SubExpression string
 	Listener   MessageListener
+	Filter     MessageFilter // 消息过滤器
 }
 
 // NewConsumer 创建新的消费者
@@ -45,11 +50,19 @@ func NewConsumer(config *ConsumerConfig) *Consumer {
 		config = DefaultConsumerConfig()
 	}
 	
-	return &Consumer{
+	consumer := &Consumer{
 		config:        config,
 		subscriptions: make(map[string]*Subscription),
 		shutdown:      make(chan struct{}),
+		loadBalanceStrategy: &AverageAllocateStrategy{}, // 默认使用平均分配策略
 	}
+	consumer.rebalanceService = NewRebalanceService(consumer)
+	
+	// 初始化消息追踪管理器（默认不启用）
+	consumer.traceManager = NewTraceManager(nil)
+	consumer.traceManager.SetEnabled(false)
+	
+	return consumer
 }
 
 // DefaultConsumerConfig 返回默认消费者配置
@@ -74,11 +87,16 @@ func (c *Consumer) SetNameServerAddr(addr string) {
 
 // Subscribe 订阅Topic
 func (c *Consumer) Subscribe(topic, subExpression string, listener MessageListener) error {
+	return c.SubscribeWithFilter(topic, subExpression, listener, nil)
+}
+
+// SubscribeWithFilter 订阅主题并指定过滤器
+func (c *Consumer) SubscribeWithFilter(topic, subExpression string, listener MessageListener, filter MessageFilter) error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	
 	if c.started {
-		return fmt.Errorf("consumer already started, cannot subscribe new topic")
+		return fmt.Errorf("consumer already started, cannot subscribe to new topics")
 	}
 	
 	if topic == "" {
@@ -86,23 +104,43 @@ func (c *Consumer) Subscribe(topic, subExpression string, listener MessageListen
 	}
 	
 	if listener == nil {
-		return fmt.Errorf("listener cannot be nil")
+		return fmt.Errorf("message listener cannot be nil")
 	}
 	
+	// 检查是否已经订阅了该主题
 	if _, exists := c.subscriptions[topic]; exists {
 		return fmt.Errorf("topic %s already subscribed", topic)
 	}
 	
-	subscription := &Subscription{
+	// 如果没有指定过滤器，根据subExpression创建默认过滤器
+	if filter == nil && subExpression != "" && subExpression != "*" {
+		filter = NewTagFilterFromExpression(subExpression)
+	}
+	
+	c.subscriptions[topic] = &Subscription{
 		Topic:         topic,
 		SubExpression: subExpression,
 		Listener:      listener,
+		Filter:        filter,
 	}
 	
-	c.subscriptions[topic] = subscription
 	log.Printf("Subscribed to topic: %s with expression: %s", topic, subExpression)
-	
 	return nil
+}
+
+// SubscribeWithTagFilter 使用标签过滤器订阅主题
+func (c *Consumer) SubscribeWithTagFilter(topic string, tags ...string) error {
+	filter := NewTagFilter(tags...)
+	return c.SubscribeWithFilter(topic, "", nil, filter)
+}
+
+// SubscribeWithSQLFilter 使用SQL92过滤器订阅主题
+func (c *Consumer) SubscribeWithSQLFilter(topic, sqlExpression string, listener MessageListener) error {
+	filter, err := NewSQL92Filter(sqlExpression)
+	if err != nil {
+		return fmt.Errorf("create SQL filter failed: %v", err)
+	}
+	return c.SubscribeWithFilter(topic, sqlExpression, listener, filter)
 }
 
 // Start 启动消费者
@@ -120,6 +158,14 @@ func (c *Consumer) Start() error {
 	
 	// 解析NameServer地址
 	c.nameServerAddrs = []string{c.config.NameServerAddr}
+	
+	// 启动重平衡服务
+	c.rebalanceService.Start()
+	
+	// 启动消息追踪管理器
+	if c.traceManager != nil {
+		c.traceManager.Start()
+	}
 	
 	// 启动消费线程
 	for i := 0; i < c.config.ConsumeThreadMax; i++ {
@@ -140,6 +186,14 @@ func (c *Consumer) Stop() error {
 	
 	if !c.started {
 		return fmt.Errorf("consumer not started")
+	}
+	
+	// 停止重平衡服务
+	c.rebalanceService.Stop()
+	
+	// 停止消息追踪管理器
+	if c.traceManager != nil {
+		c.traceManager.Stop()
 	}
 	
 	close(c.shutdown)
@@ -195,7 +249,7 @@ func (c *Consumer) pullMessagesForTopic(topic string, subscription *Subscription
 	messages := c.mockPullMessages(topic)
 	
 	if len(messages) > 0 {
-		c.consumeMessages(messages, subscription.Listener)
+		c.consumeMessagesWithFilter(messages, subscription)
 	}
 }
 
@@ -235,6 +289,53 @@ func (c *Consumer) consumeMessages(messages []*MessageExt, listener MessageListe
 	}
 }
 
+// consumeMessagesWithFilter 使用过滤器消费消息
+func (c *Consumer) consumeMessagesWithFilter(messages []*MessageExt, subscription *Subscription) {
+	if len(messages) == 0 || subscription == nil || subscription.Listener == nil {
+		return
+	}
+	
+	// 应用过滤器
+	filteredMessages := make([]*MessageExt, 0, len(messages))
+	for _, msg := range messages {
+		if subscription.Filter == nil || subscription.Filter.Match(msg) {
+			filteredMessages = append(filteredMessages, msg)
+		} else {
+			log.Printf("Message filtered out: %s, topic: %s, tags: %s", msg.MsgId, msg.Topic, msg.Tags)
+		}
+	}
+	
+	// 消费通过过滤器的消息
+	if len(filteredMessages) > 0 {
+		c.consumeWithTrace(filteredMessages, subscription)
+	}
+}
+
+// consumeWithTrace 带追踪的消息消费
+func (c *Consumer) consumeWithTrace(msgs []*MessageExt, subscription *Subscription) {
+	for _, msg := range msgs {
+		// 创建消费者追踪上下文
+		var traceCtx *TraceContext
+		if c.traceManager != nil && c.traceManager.IsEnabled() {
+			traceCtx = CreateConsumeTraceContext(c.config.GroupName, msg)
+			traceCtx.TimeStamp = time.Now().UnixMilli()
+		}
+		
+		start := time.Now()
+		
+		// 消费消息
+		result := subscription.Listener.ConsumeMessage([]*MessageExt{msg})
+		
+		// 更新追踪信息
+		if traceCtx != nil {
+			traceCtx.Success = (result == ConsumeSuccess)
+			traceCtx.CostTime = time.Since(start).Milliseconds()
+			traceCtx.ContextCode = int(result)
+			c.traceManager.TraceMessage(traceCtx)
+		}
+	}
+}
+
 // GetSubscriptions 获取订阅信息
 func (c *Consumer) GetSubscriptions() map[string]*Subscription {
 	c.mutex.RLock()
@@ -246,6 +347,74 @@ func (c *Consumer) GetSubscriptions() map[string]*Subscription {
 	}
 	
 	return result
+}
+
+// SetLoadBalanceStrategy 设置负载均衡策略
+func (c *Consumer) SetLoadBalanceStrategy(strategy LoadBalanceStrategy) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	c.loadBalanceStrategy = strategy
+}
+
+// GetLoadBalanceStrategy 获取负载均衡策略
+func (c *Consumer) GetLoadBalanceStrategy() LoadBalanceStrategy {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+	return c.loadBalanceStrategy
+}
+
+// SetRebalanceInterval 设置重平衡间隔
+func (c *Consumer) SetRebalanceInterval(interval time.Duration) {
+	if c.rebalanceService != nil {
+		c.rebalanceService.rebalanceInterval = interval
+	}
+}
+
+// TriggerRebalance 手动触发重平衡
+func (c *Consumer) TriggerRebalance() {
+	if c.rebalanceService != nil {
+		c.rebalanceService.doRebalance()
+	}
+}
+
+// EnableTrace 启用消息追踪
+func (c *Consumer) EnableTrace(nameServerAddr string, traceTopic string) error {
+	if c.traceManager == nil {
+		return fmt.Errorf("trace manager not initialized")
+	}
+	
+	// 创建追踪分发器
+	dispatcher := NewDefaultTraceDispatcher(nameServerAddr, traceTopic)
+	c.traceManager = NewTraceManager(dispatcher)
+	c.traceManager.SetEnabled(true)
+	
+	// 如果消费者已启动，启动追踪管理器
+	if c.IsStarted() {
+		return c.traceManager.Start()
+	}
+	
+	return nil
+}
+
+// DisableTrace 禁用消息追踪
+func (c *Consumer) DisableTrace() {
+	if c.traceManager != nil {
+		c.traceManager.SetEnabled(false)
+	}
+}
+
+// AddTraceHook 添加追踪钩子
+func (c *Consumer) AddTraceHook(hook TraceHook) {
+	if c.traceManager != nil {
+		c.traceManager.AddHook(hook)
+	}
+}
+
+// RemoveTraceHook 移除追踪钩子
+func (c *Consumer) RemoveTraceHook(hookName string) {
+	if c.traceManager != nil {
+		c.traceManager.RemoveHook(hookName)
+	}
 }
 
 // IsStarted 检查消费者是否已启动

@@ -251,7 +251,7 @@ func TestGetTopicConfigNotFound(t *testing.T) {
 
 // TestPutMessage 测试消息存储
 func TestPutMessage(t *testing.T) {
-	config := DefaultBrokerConfig()
+	config := NewTestBrokerConfig()
 	broker := NewBroker(config)
 
 	// 启动broker
@@ -292,7 +292,7 @@ func TestPutMessage(t *testing.T) {
 
 // TestPutDelayMessage 测试延迟消息
 func TestPutDelayMessage(t *testing.T) {
-	config := DefaultBrokerConfig()
+	config := NewTestBrokerConfig()
 	broker := NewBroker(config)
 
 	// 启动broker
@@ -330,7 +330,7 @@ func TestPutDelayMessage(t *testing.T) {
 
 // TestPutOrderedMessage 测试顺序消息
 func TestPutOrderedMessage(t *testing.T) {
-	config := DefaultBrokerConfig()
+	config := NewTestBrokerConfig()
 	broker := NewBroker(config)
 
 	// 启动broker
@@ -368,7 +368,7 @@ func TestPutOrderedMessage(t *testing.T) {
 
 // TestTransactionMessage 测试事务消息
 func TestTransactionMessage(t *testing.T) {
-	config := DefaultBrokerConfig()
+	config := NewTestBrokerConfig()
 	broker := NewBroker(config)
 
 	// 启动broker
@@ -411,9 +411,49 @@ func TestTransactionMessage(t *testing.T) {
 	}
 }
 
+// getFreePort 获取空闲端口
+func getFreePort() int {
+	addr, err := net.ResolveTCPAddr("tcp", "localhost:0")
+	if err != nil {
+		return 0
+	}
+	l, err := net.ListenTCP("tcp", addr)
+	if err != nil {
+		return 0
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port
+}
+
+// NewTestBrokerConfig 创建用于测试的Broker配置，使用动态端口分配
+func NewTestBrokerConfig() *Config {
+	return &Config{
+		BrokerName:       "TestBroker",
+		BrokerId:         0,
+		ClusterName:      "TestCluster",
+		ListenPort:       getFreePort(),
+		NameServerAddr:   "127.0.0.1:9876",
+		StorePathRootDir: "/tmp/rocketmq-test-store",
+		SendMessageThreadPoolNums: 16,
+		PullMessageThreadPoolNums: 16,
+		FlushDiskType:    0, // ASYNC_FLUSH
+		BrokerRole:       0, // ASYNC_MASTER
+		HaListenPort:     getFreePort(),
+		ReplicationMode:  0, // ASYNC_REPLICATION
+		EnableCluster:    true,
+		ClusterManagerPort: getFreePort(),
+		EnableFailover:   true,
+		AutoFailover:     false,
+		FailoverDelay:    30,
+		BackupBrokers:    []string{},
+	}
+}
+
 // TestTransactionRollback 测试事务回滚
 func TestTransactionRollback(t *testing.T) {
 	config := DefaultBrokerConfig()
+	config.ListenPort = getFreePort()
+	config.HaListenPort = getFreePort()
 	broker := NewBroker(config)
 
 	// 启动broker
@@ -456,9 +496,11 @@ func TestTransactionRollback(t *testing.T) {
 	}
 }
 
-// TestPullMessage 测试消息拉取
+// TestPullMessage 测试拉取消息
 func TestPullMessage(t *testing.T) {
 	config := DefaultBrokerConfig()
+	config.ListenPort = getFreePort()
+	config.HaListenPort = getFreePort()
 	broker := NewBroker(config)
 
 	// 启动broker
@@ -552,7 +594,7 @@ func (m *MockTransactionListener) CheckLocalTransaction(msg *common.MessageExt) 
 
 // BenchmarkPutMessage 基准测试消息存储
 func BenchmarkPutMessage(b *testing.B) {
-	config := DefaultBrokerConfig()
+	config := NewTestBrokerConfig()
 	broker := NewBroker(config)
 
 	// 创建Topic
@@ -578,7 +620,7 @@ func BenchmarkPutMessage(b *testing.B) {
 
 // BenchmarkCreateTopic 基准测试Topic创建
 func BenchmarkCreateTopic(b *testing.B) {
-	config := DefaultBrokerConfig()
+	config := NewTestBrokerConfig()
 	broker := NewBroker(config)
 
 	b.ResetTimer()
@@ -593,7 +635,7 @@ func BenchmarkCreateTopic(b *testing.B) {
 
 // BenchmarkGetTopicConfig 基准测试获取Topic配置
 func BenchmarkGetTopicConfig(b *testing.B) {
-	config := DefaultBrokerConfig()
+	config := NewTestBrokerConfig()
 	broker := NewBroker(config)
 
 	// 预先创建一些Topic

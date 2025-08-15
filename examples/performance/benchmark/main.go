@@ -21,6 +21,9 @@ type BenchmarkConfig struct {
 	ReportInterval   time.Duration // 报告间隔
 	NameServerAddr   string        // NameServer地址
 	Topic            string        // 测试Topic
+	ConsumerType     string        // 消费者类型: push, pull, simple
+	EnableTrace      bool          // 是否启用消息追踪
+	LoadBalanceType  string        // 负载均衡类型: average, roundrobin, consistent, machineroom
 }
 
 // 性能统计
@@ -45,15 +48,18 @@ func main() {
 
 	// 基准测试配置
 	config := &BenchmarkConfig{
-		ProducerCount:  4,                // 4个生产者
-		ConsumerCount:  2,                // 2个消费者
-		MessageCount:   1000,             // 每个生产者发送1000条消息
-		MessageSize:    1024,             // 1KB消息
-		TestDuration:   60 * time.Second, // 测试60秒
-		WarmupDuration: 10 * time.Second, // 预热10秒
-		ReportInterval: 5 * time.Second,  // 每5秒报告一次
-		NameServerAddr: "127.0.0.1:9876",
-		Topic:          "BenchmarkTopic",
+		ProducerCount:   4,                // 4个生产者
+		ConsumerCount:   2,                // 2个消费者
+		MessageCount:    1000,             // 每个生产者发送1000条消息
+		MessageSize:     1024,             // 1KB消息
+		TestDuration:    60 * time.Second, // 测试60秒
+		WarmupDuration:  10 * time.Second, // 预热10秒
+		ReportInterval:  5 * time.Second,  // 每5秒报告一次
+		NameServerAddr:  "127.0.0.1:9876",
+		Topic:           "BenchmarkTopic",
+		ConsumerType:    "push",           // 消费者类型: push, pull, simple
+		EnableTrace:     true,             // 启用消息追踪
+		LoadBalanceType: "average",        // 负载均衡策略
 	}
 
 	printBenchmarkConfig(config)
@@ -67,6 +73,9 @@ func printBenchmarkConfig(config *BenchmarkConfig) {
 	fmt.Printf("\n--- 基准测试配置 ---\n")
 	fmt.Printf("生产者数量: %d\n", config.ProducerCount)
 	fmt.Printf("消费者数量: %d\n", config.ConsumerCount)
+	fmt.Printf("消费者类型: %s\n", config.ConsumerType)
+	fmt.Printf("负载均衡策略: %s\n", config.LoadBalanceType)
+	fmt.Printf("消息追踪: %t\n", config.EnableTrace)
 	fmt.Printf("每个生产者消息数: %d\n", config.MessageCount)
 	fmt.Printf("消息大小: %d 字节\n", config.MessageSize)
 	fmt.Printf("测试持续时间: %v\n", config.TestDuration)
@@ -179,6 +188,14 @@ func startBenchmarkProducer(config *BenchmarkConfig, producerIndex int) {
 	producer := client.NewProducer(producerGroup)
 	producer.SetNameServers([]string{config.NameServerAddr})
 
+	// 启用消息追踪
+	if config.EnableTrace {
+		err := producer.EnableTrace(config.NameServerAddr, "RMQ_SYS_TRACE_TOPIC")
+		if err != nil {
+			log.Printf("[生产者-%d] 启用追踪失败: %v", producerIndex, err)
+		}
+	}
+
 	if err := producer.Start(); err != nil {
 		log.Printf("[生产者-%d] 启动失败: %v", producerIndex, err)
 		atomic.AddInt64(&globalStats.ErrorCount, 1)
@@ -225,21 +242,73 @@ func startBenchmarkConsumer(config *BenchmarkConfig, consumerIndex int) {
 	consumerGroup := "benchmark_consumer_group"
 	fmt.Printf("[消费者-%d] 启动\n", consumerIndex)
 
-	// 创建消费者配置
-	consumerConfig := &client.ConsumerConfig{
-		GroupName:        consumerGroup,
-		NameServerAddr:   config.NameServerAddr,
-		ConsumeFromWhere: client.ConsumeFromLastOffset,
-		MessageModel:     client.Clustering,
-		ConsumeThreadMin: 4,
-		ConsumeThreadMax: 8,
-		PullInterval:     10 * time.Millisecond,
-		PullBatchSize:    32,
-		ConsumeTimeout:   30 * time.Second,
-	}
-
 	// 创建消费者
-	consumer := client.NewConsumer(consumerConfig)
+	var consumer *client.Consumer
+	switch config.ConsumerType {
+	case "push":
+		pushConsumer := client.NewPushConsumer(consumerGroup)
+		pushConsumer.Consumer.SetNameServerAddr(config.NameServerAddr)
+		
+		// 设置负载均衡策略
+		switch config.LoadBalanceType {
+		case "hash":
+			pushConsumer.SetLoadBalanceStrategy(client.NewConsistentHashAllocateStrategy(160))
+		case "room":
+			pushConsumer.SetLoadBalanceStrategy(client.NewMachineRoomAllocateStrategy(nil))
+		default:
+			pushConsumer.SetLoadBalanceStrategy(&client.AverageAllocateStrategy{})
+		}
+		
+		// 启用消息追踪
+		if config.EnableTrace {
+			err := pushConsumer.Consumer.EnableTrace(config.NameServerAddr, "RMQ_SYS_TRACE_TOPIC")
+			if err != nil {
+				log.Printf("[消费者-%d] 启用追踪失败: %v", consumerIndex, err)
+			}
+		}
+		
+		consumer = pushConsumer.Consumer
+	case "pull":
+		pullConsumer := client.NewPullConsumer(consumerGroup)
+		pullConsumer.Consumer.SetNameServerAddr(config.NameServerAddr)
+		
+		// 启用消息追踪
+		if config.EnableTrace {
+			err := pullConsumer.Consumer.EnableTrace(config.NameServerAddr, "RMQ_SYS_TRACE_TOPIC")
+			if err != nil {
+				log.Printf("[消费者-%d] 启用追踪失败: %v", consumerIndex, err)
+			}
+		}
+		
+		consumer = pullConsumer.Consumer
+	case "simple":
+		simpleConsumer := client.NewSimpleConsumer(consumerGroup)
+		simpleConsumer.Consumer.SetNameServerAddr(config.NameServerAddr)
+		
+		// 启用消息追踪
+		if config.EnableTrace {
+			err := simpleConsumer.Consumer.EnableTrace(config.NameServerAddr, "RMQ_SYS_TRACE_TOPIC")
+			if err != nil {
+				log.Printf("[消费者-%d] 启用追踪失败: %v", consumerIndex, err)
+			}
+		}
+		
+		consumer = simpleConsumer.Consumer
+	default:
+		// 默认使用基础消费者
+		consumerConfig := &client.ConsumerConfig{
+			GroupName:        consumerGroup,
+			NameServerAddr:   config.NameServerAddr,
+			ConsumeFromWhere: client.ConsumeFromLastOffset,
+			MessageModel:     client.Clustering,
+			ConsumeThreadMin: 4,
+			ConsumeThreadMax: 8,
+			PullInterval:     10 * time.Millisecond,
+			PullBatchSize:    32,
+			ConsumeTimeout:   30 * time.Second,
+		}
+		consumer = client.NewConsumer(consumerConfig)
+	}
 
 	// 订阅Topic
 	err := consumer.Subscribe(config.Topic, "*", &BenchmarkMessageListener{

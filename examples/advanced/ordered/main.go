@@ -52,6 +52,12 @@ func startOrderedProducer() {
 	producer := client.NewProducer("ordered_producer_group")
 	producer.SetNameServers([]string{"127.0.0.1:9876"})
 
+	// 启用消息追踪
+	err := producer.EnableTrace("trace_topic", "trace_group")
+	if err != nil {
+		log.Printf("[生产者] 启用消息追踪失败: %v", err)
+	}
+
 	if err := producer.Start(); err != nil {
 		log.Printf("[生产者] 启动失败: %v", err)
 		return
@@ -211,8 +217,17 @@ func startOrderedConsumer() {
 	// 创建消费者
 	consumer := client.NewConsumer(config)
 
+	// 设置负载均衡策略
+	consumer.SetLoadBalanceStrategy(&client.AverageAllocateStrategy{})
+
+	// 启用消息追踪
+	err := consumer.EnableTrace("trace_topic", "trace_group")
+	if err != nil {
+		log.Printf("[消费者] 启用消息追踪失败: %v", err)
+	}
+
 	// 订阅Topic
-	err := consumer.Subscribe("OrderEventTopic", "*", &OrderedMessageListener{})
+	err = consumer.Subscribe("OrderEventTopic", "*", &OrderedMessageListener{})
 	if err != nil {
 		log.Printf("[消费者] 订阅失败: %v", err)
 		return

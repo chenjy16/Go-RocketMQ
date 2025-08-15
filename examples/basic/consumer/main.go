@@ -12,7 +12,16 @@ import (
 )
 
 func main() {
-	fmt.Println("=== Go-RocketMQ 消费者示例 ===")
+	fmt.Println("=== Go-RocketMQ Enhanced 消费者示例 ===")
+
+	// 演示不同类型的消费者
+	demoBasicConsumer()
+	demoEnhancedFeatures()
+}
+
+// 基础消费者演示
+func demoBasicConsumer() {
+	fmt.Println("\n--- 基础消费者演示 ---")
 
 	// 创建消费者配置
 	config := &client.ConsumerConfig{
@@ -39,30 +48,86 @@ func main() {
 	}
 	fmt.Println("订阅 TestTopic 成功 (所有消息)")
 
-	// 订阅Topic - 只消费TagA的消息
-	err = consumer.Subscribe("TestTopic", "TagA", &TagAMessageListener{})
-	if err != nil {
-		log.Printf("订阅TagA失败: %v", err)
-	}
-
 	// 启动消费者
 	if err := consumer.Start(); err != nil {
 		log.Fatalf("启动消费者失败: %v", err)
 	}
 	defer consumer.Stop()
 
-	fmt.Println("消费者启动成功，开始消费消息...")
-	fmt.Println("按 Ctrl+C 停止消费者")
+	fmt.Println("基础消费者启动成功")
+
+	// 运行一段时间后停止
+	time.Sleep(5 * time.Second)
+	fmt.Println("基础消费者演示完成")
+}
+
+// 增强功能演示
+func demoEnhancedFeatures() {
+	fmt.Println("\n--- 增强功能演示 ---")
+
+	// 创建增强消费者
+	consumer2 := client.NewConsumer(&client.ConsumerConfig{
+		GroupName:        "enhanced_consumer_group",
+		NameServerAddr:   "127.0.0.1:9876",
+		ConsumeFromWhere: client.ConsumeFromLastOffset,
+		MessageModel:     client.Clustering,
+		ConsumeThreadMin: 5,
+		ConsumeThreadMax: 10,
+		PullInterval:     100 * time.Millisecond,
+		PullBatchSize:    32,
+		ConsumeTimeout:   15 * time.Second,
+	})
+
+	// 设置负载均衡策略
+	consumer2.SetLoadBalanceStrategy(&client.AverageAllocateStrategy{})
+	fmt.Println("设置平均分配负载均衡策略")
+
+	// 启用消息追踪
+	consumer2.EnableTrace("trace_topic", "trace_group")
+	fmt.Println("启用消息追踪功能")
+
+	// 订阅消息
+	err := consumer2.Subscribe("TestTopic", "*", &EnhancedMessageListener{})
+	if err != nil {
+		log.Fatalf("增强消费者订阅失败: %v", err)
+	}
+
+	// 启动增强消费者
+	if err := consumer2.Start(); err != nil {
+		log.Fatalf("启动增强消费者失败: %v", err)
+	}
+	defer consumer2.Stop()
+
+	fmt.Println("增强消费者启动成功")
+
+	// 运行一段时间
+	time.Sleep(5 * time.Second)
 
 	// 等待中断信号
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	// 显示消费统计
-	go showConsumeStats()
-
+	fmt.Println("\n按 Ctrl+C 停止所有消费者")
 	<-sigChan
-	fmt.Println("\n正在停止消费者...")
+	fmt.Println("\n正在停止所有消费者...")
+}
+
+// EnhancedMessageListener 增强消息监听器
+type EnhancedMessageListener struct{}
+
+func (l *EnhancedMessageListener) ConsumeMessage(msgs []*client.MessageExt) client.ConsumeResult {
+	for _, msg := range msgs {
+		fmt.Printf("[增强消费者] 收到消息 - Topic: %s, Tags: %s, MsgId: %s\n",
+			msg.Topic, msg.Tags, msg.MsgId)
+		fmt.Printf("[增强消费者] 消息内容: %s\n", string(msg.Body))
+		fmt.Printf("[增强消费者] 队列信息 - QueueId: %d, QueueOffset: %d\n",
+			msg.QueueId, msg.QueueOffset)
+
+		// 模拟消息处理
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	return client.ConsumeSuccess
 }
 
 // 消费统计计数器

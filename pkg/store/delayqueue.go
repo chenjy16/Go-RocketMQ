@@ -79,14 +79,35 @@ func (dqs *DelayQueueService) Start() error {
 	// 启动后台goroutine来初始化
 	go func() {
 		// 等待一小段时间确保store完全启动
-		time.Sleep(100 * time.Millisecond)
+		select {
+		case <-time.After(100 * time.Millisecond):
+			// 继续初始化
+		case <-dqs.shutdown:
+			// 服务已关闭，退出
+			return
+		}
+		
+		// 检查服务是否仍在运行
+		dqs.mutex.RLock()
+		running := dqs.running
+		dqs.mutex.RUnlock()
+		
+		if !running {
+			return
+		}
 		
 		// 加载延迟消息消费进度
 		dqs.loadProgress()
 
 		// 启动所有延迟级别的定时器
 		for i := 1; i <= len(DelayLevels); i++ {
-			dqs.startDelayLevelTimer(int32(i))
+			select {
+			case <-dqs.shutdown:
+				// 服务已关闭，退出
+				return
+			default:
+				go dqs.startDelayLevelTimer(int32(i))
+			}
 		}
 	}()
 
@@ -282,17 +303,31 @@ func (dqs *DelayQueueService) deliverMessage(msg *common.MessageExt) error {
 // loadProgress 加载延迟消息消费进度
 func (dqs *DelayQueueService) loadProgress() {
 	// 简化实现，从每个延迟队列的最小偏移量开始
+	dqs.offsetMutex.Lock()
+	defer dqs.offsetMutex.Unlock()
+	
+	// 检查messageStore是否可用
+	if dqs.messageStore == nil {
+		return
+	}
+	
 	for i := 1; i <= len(DelayLevels); i++ {
-		topic := fmt.Sprintf("%s_%d", SCHEDULE_TOPIC_PREFIX, i)
-		minOffset := dqs.messageStore.GetMinOffsetInQueue(topic, 0)
-		dqs.offsetTable[int32(i)] = minOffset
+		// 使用默认偏移量0，避免在启动阶段调用可能导致死锁的方法
+		dqs.offsetTable[int32(i)] = 0
 	}
 }
 
 // saveProgress 保存延迟消息消费进度
 func (dqs *DelayQueueService) saveProgress() {
 	// 简化实现，实际应该持久化到文件
-	log.Printf("Saving delay queue progress: %v", dqs.offsetTable)
+	dqs.offsetMutex.RLock()
+	progressCopy := make(map[int32]int64)
+	for k, v := range dqs.offsetTable {
+		progressCopy[k] = v
+	}
+	dqs.offsetMutex.RUnlock()
+	
+	log.Printf("Saving delay queue progress: %v", progressCopy)
 }
 
 // GetDelayLevel 根据延迟时间获取延迟级别

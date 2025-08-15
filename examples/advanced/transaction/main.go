@@ -29,6 +29,12 @@ func main() {
 	producer := client.NewProducer("transaction_producer_group")
 	producer.SetNameServers([]string{"127.0.0.1:9876"})
 
+	// 启用消息追踪
+	err := producer.EnableTrace("trace_topic", "trace_group")
+	if err != nil {
+		log.Printf("启用消息追踪失败: %v", err)
+	}
+
 	if err := producer.Start(); err != nil {
 		log.Fatalf("启动事务生产者失败: %v", err)
 	}

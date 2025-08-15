@@ -10,57 +10,61 @@ import (
 )
 
 func main() {
-	fmt.Println("=== Go-RocketMQ 简单演示 ===")
-	fmt.Println("本演示将启动一个生产者和一个消费者，展示完整的消息流程")
+	fmt.Println("=== Go-RocketMQ Enhanced 简单演示 ===")
+	fmt.Println("本演示将展示增强的生产者和消费者功能，包括消息追踪、负载均衡等特性")
 
 	var wg sync.WaitGroup
 
-	// 启动消费者
+	// 启动增强消费者
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		startConsumer()
+		startEnhancedConsumer()
 	}()
 
 	// 等待消费者启动
 	time.Sleep(2 * time.Second)
 
-	// 启动生产者
+	// 启动增强生产者
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		startProducer()
+		startEnhancedProducer()
 	}()
 
 	// 等待所有goroutine完成
 	wg.Wait()
-	fmt.Println("\n演示完成")
+	fmt.Println("\n增强演示完成")
 }
 
-// 启动生产者
-func startProducer() {
-	fmt.Println("\n[生产者] 正在启动...")
+// 启动增强生产者
+func startEnhancedProducer() {
+	fmt.Println("\n[增强生产者] 正在启动...")
 
 	// 创建生产者
-	producer := client.NewProducer("demo_producer_group")
+	producer := client.NewProducer("enhanced_demo_producer_group")
 	producer.SetNameServers([]string{"127.0.0.1:9876"})
 
+	// 启用消息追踪
+	producer.EnableTrace("trace_topic", "trace_group")
+	fmt.Println("[增强生产者] 启用消息追踪功能")
+
 	if err := producer.Start(); err != nil {
-		log.Printf("[生产者] 启动失败: %v", err)
+		log.Printf("[增强生产者] 启动失败: %v", err)
 		return
 	}
 	defer producer.Shutdown()
 
-	fmt.Println("[生产者] 启动成功")
+	fmt.Println("[增强生产者] 启动成功")
 
 	// 发送不同类型的消息
-	sendDemoMessages(producer)
+	sendEnhancedDemoMessages(producer)
 
-	fmt.Println("[生产者] 所有消息发送完成")
+	fmt.Println("[增强生产者] 所有消息发送完成")
 }
 
-// 发送演示消息
-func sendDemoMessages(producer *client.Producer) {
+// 发送增强演示消息
+func sendEnhancedDemoMessages(producer *client.Producer) {
 	// 1. 发送普通消息
 	fmt.Println("\n[生产者] 发送普通消息...")
 	for i := 0; i < 3; i++ {
@@ -148,13 +152,13 @@ func sendDemoMessages(producer *client.Producer) {
 	time.Sleep(2 * time.Second)
 }
 
-// 启动消费者
-func startConsumer() {
-	fmt.Println("\n[消费者] 正在启动...")
+// 启动增强消费者
+func startEnhancedConsumer() {
+	fmt.Println("\n[增强消费者] 正在启动...")
 
 	// 创建消费者配置
 	config := &client.ConsumerConfig{
-		GroupName:        "demo_consumer_group",
+		GroupName:        "enhanced_demo_consumer_group",
 		NameServerAddr:   "127.0.0.1:9876",
 		ConsumeFromWhere: client.ConsumeFromLastOffset,
 		MessageModel:     client.Clustering,
@@ -168,32 +172,40 @@ func startConsumer() {
 	// 创建消费者
 	consumer := client.NewConsumer(config)
 
+	// 设置负载均衡策略
+	consumer.SetLoadBalanceStrategy(&client.AverageAllocateStrategy{})
+	fmt.Println("[增强消费者] 设置平均分配负载均衡策略")
+
+	// 启用消息追踪
+	consumer.EnableTrace("trace_topic", "trace_group")
+	fmt.Println("[增强消费者] 启用消息追踪功能")
+
 	// 订阅Topic
-	err := consumer.Subscribe("DemoTopic", "*", &DemoMessageListener{})
+	err := consumer.Subscribe("DemoTopic", "*", &EnhancedDemoMessageListener{})
 	if err != nil {
-		log.Printf("[消费者] 订阅失败: %v", err)
+		log.Printf("[增强消费者] 订阅失败: %v", err)
 		return
 	}
 
 	if err := consumer.Start(); err != nil {
-		log.Printf("[消费者] 启动失败: %v", err)
+		log.Printf("[增强消费者] 启动失败: %v", err)
 		return
 	}
 	defer consumer.Stop()
 
-	fmt.Println("[消费者] 启动成功，开始监听消息...")
+	fmt.Println("[增强消费者] 启动成功，开始监听消息...")
 
 	// 运行15秒后停止
 	time.Sleep(15 * time.Second)
-	fmt.Println("[消费者] 停止监听")
+	fmt.Println("[增强消费者] 停止监听")
 }
 
-// DemoMessageListener 演示消息监听器
-type DemoMessageListener struct{}
+// EnhancedDemoMessageListener 增强演示消息监听器
+type EnhancedDemoMessageListener struct{}
 
-func (l *DemoMessageListener) ConsumeMessage(msgs []*client.MessageExt) client.ConsumeResult {
+func (l *EnhancedDemoMessageListener) ConsumeMessage(msgs []*client.MessageExt) client.ConsumeResult {
 	for _, msg := range msgs {
-		fmt.Printf("\n[消费者] 收到消息:\n")
+		fmt.Printf("\n[增强消费者] 收到消息:\n")
 		fmt.Printf("  Topic: %s\n", msg.Topic)
 		fmt.Printf("  Tags: %s\n", msg.Tags)
 		fmt.Printf("  Keys: %s\n", msg.Keys)
@@ -201,6 +213,7 @@ func (l *DemoMessageListener) ConsumeMessage(msgs []*client.MessageExt) client.C
 		fmt.Printf("  内容: %s\n", string(msg.Body))
 		fmt.Printf("  队列: QueueId=%d, Offset=%d\n", msg.QueueId, msg.QueueOffset)
 		fmt.Printf("  时间: %s\n", msg.StoreTimestamp.Format("2006-01-02 15:04:05"))
+		fmt.Printf("  [追踪] 消息已被追踪记录\n")
 
 		// 打印消息属性
 		if len(msg.Properties) > 0 {
@@ -225,7 +238,7 @@ func (l *DemoMessageListener) ConsumeMessage(msgs []*client.MessageExt) client.C
 
 		// 模拟消息处理时间
 		time.Sleep(100 * time.Millisecond)
-		fmt.Println("  [消费者] 消息处理完成")
+		fmt.Println("  [增强消费者] 消息处理完成，追踪信息已记录")
 	}
 
 	return client.ConsumeSuccess

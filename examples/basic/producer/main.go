@@ -9,7 +9,20 @@ import (
 )
 
 func main() {
-	fmt.Println("=== Go-RocketMQ 生产者示例 ===")
+	fmt.Println("=== Go-RocketMQ Enhanced 生产者示例 ===")
+
+	// 演示基础生产者功能
+	demoBasicProducer()
+
+	// 演示增强功能
+	demoEnhancedFeatures()
+
+	fmt.Println("\n所有演示完成")
+}
+
+// 基础生产者演示
+func demoBasicProducer() {
+	fmt.Println("\n--- 基础生产者演示 ---")
 
 	// 创建生产者实例
 	producer := client.NewProducer("example_producer_group")
@@ -37,15 +50,41 @@ func main() {
 	fmt.Println("\n--- 发送单向消息 ---")
 	sendOnewayMessages(producer)
 
-	// 发送带标签的消息
-	fmt.Println("\n--- 发送带标签的消息 ---")
-	sendTaggedMessages(producer)
+	fmt.Println("基础生产者演示完成")
+}
 
-	// 发送带属性的消息
-	fmt.Println("\n--- 发送带属性的消息 ---")
-	sendMessageWithProperties(producer)
+// 增强功能演示
+func demoEnhancedFeatures() {
+	fmt.Println("\n--- 增强功能演示 ---")
 
-	fmt.Println("\n所有消息发送完成")
+	// 创建增强生产者
+	producer := client.NewProducer("enhanced_producer_group")
+	producer.SetNameServers([]string{"127.0.0.1:9876"})
+
+	// 启用消息追踪
+	producer.EnableTrace("trace_topic", "trace_group")
+	fmt.Println("启用消息追踪功能")
+
+	if err := producer.Start(); err != nil {
+		log.Fatalf("启动增强生产者失败: %v", err)
+	}
+	defer producer.Shutdown()
+
+	// 发送延时消息
+	fmt.Println("\n--- 发送延时消息 ---")
+	sendDelayMessages(producer)
+
+	// 发送批量消息
+	fmt.Println("\n--- 发送批量消息 ---")
+	sendBatchMessages(producer)
+
+	// 发送顺序消息
+	fmt.Println("\n--- 发送顺序消息 ---")
+	sendOrderedMessages(producer)
+
+	// 发送事务消息
+	fmt.Println("\n--- 发送事务消息 ---")
+	sendTransactionMessages(producer)
 }
 
 // 发送同步消息
@@ -146,24 +185,121 @@ func sendTaggedMessages(producer *client.Producer) {
 	}
 }
 
-// 发送带属性的消息
-func sendMessageWithProperties(producer *client.Producer) {
+// 发送延时消息
+func sendDelayMessages(producer *client.Producer) {
 	for i := 0; i < 3; i++ {
-		// 创建带属性的消息
+		// 创建延时消息
 		msg := client.NewMessage(
 			"TestTopic",
-			[]byte(fmt.Sprintf("带属性的消息内容 #%d - %s", i+1, time.Now().Format("2006-01-02 15:04:05"))),
-		).SetKeys(fmt.Sprintf("key_%d", i+1)).SetProperty("userId", fmt.Sprintf("user_%d", i+1)).SetProperty("orderId", fmt.Sprintf("order_%d", i+1)).SetProperty("priority", "high")
+			[]byte(fmt.Sprintf("延时消息内容 #%d - %s", i+1, time.Now().Format("2006-01-02 15:04:05"))),
+		).SetDelayTimeLevel(3) // 延时10秒
 
-		// 发送消息
+		// 发送延时消息
 		result, err := producer.SendSync(msg)
 		if err != nil {
-			log.Printf("发送带属性消息失败: %v", err)
+			log.Printf("发送延时消息失败: %v", err)
 			continue
 		}
 
-		fmt.Printf("带属性消息发送成功 - MsgId: %s, Keys: %s\n",
-			result.MsgId, msg.Keys)
+		fmt.Printf("延时消息发送成功 - MsgId: %s, 延时级别: %d\n",
+			result.MsgId, 3)
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+// 发送批量消息
+func sendBatchMessages(producer *client.Producer) {
+	// 创建批量消息
+	var messages []*client.Message
+	for i := 0; i < 5; i++ {
+		msg := client.NewMessage(
+			"TestTopic",
+			[]byte(fmt.Sprintf("批量消息内容 #%d - %s", i+1, time.Now().Format("2006-01-02 15:04:05"))),
+		).SetKeys(fmt.Sprintf("batch_key_%d", i+1))
+		messages = append(messages, msg)
+	}
+
+	// 发送批量消息（逐个发送）
+	for _, msg := range messages {
+		result, err := producer.SendSync(msg)
+		if err != nil {
+			log.Printf("发送批量消息失败: %v", err)
+			continue
+		}
+		fmt.Printf("批量消息发送成功 - MsgId: %s\n", result.MsgId)
+	}
+	fmt.Printf("批量消息发送完成，总数量: %d\n", len(messages))
+}
+
+// 发送顺序消息
+func sendOrderedMessages(producer *client.Producer) {
+	orderId := "order_12345"
+	for i := 0; i < 3; i++ {
+		// 创建顺序消息
+		msg := client.NewMessage(
+			"TestTopic",
+			[]byte(fmt.Sprintf("顺序消息内容 #%d - OrderId: %s - %s", i+1, orderId, time.Now().Format("2006-01-02 15:04:05"))),
+		).SetKeys(orderId)
+
+		// 发送顺序消息
+		result, err := producer.SendSync(msg)
+		if err != nil {
+			log.Printf("发送顺序消息失败: %v", err)
+			continue
+		}
+
+		fmt.Printf("顺序消息发送成功 - MsgId: %s, QueueOffset: %d\n",
+			result.MsgId, result.QueueOffset)
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// 发送事务消息
+func sendTransactionMessages(producer *client.Producer) {
+	// 创建事务生产者
+	txProducer := client.NewTransactionProducer("tx_producer_group", &ExampleTransactionListener{})
+	txProducer.SetNameServers([]string{"127.0.0.1:9876"})
+
+	if err := txProducer.Start(); err != nil {
+		log.Printf("启动事务生产者失败: %v", err)
+		return
+	}
+	defer txProducer.Shutdown()
+
+	for i := 0; i < 2; i++ {
+		// 创建事务消息
+		msg := client.NewMessage(
+			"TestTopic",
+			[]byte(fmt.Sprintf("事务消息内容 #%d - %s", i+1, time.Now().Format("2006-01-02 15:04:05"))),
+		).SetKeys(fmt.Sprintf("tx_key_%d", i+1))
+
+		// 发送事务消息
+		result, err := txProducer.SendMessageInTransaction(msg, fmt.Sprintf("tx_arg_%d", i+1))
+		if err != nil {
+			log.Printf("发送事务消息失败: %v", err)
+			continue
+		}
+
+		fmt.Printf("事务消息发送成功 - MsgId: %s, TransactionId: %s\n",
+			result.MsgId, result.TransactionId)
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+// 事务监听器示例
+type ExampleTransactionListener struct{}
+
+func (l *ExampleTransactionListener) ExecuteLocalTransaction(msg *client.Message, arg interface{}) client.LocalTransactionState {
+	fmt.Printf("执行本地事务 - Keys: %s, Arg: %v\n", msg.Keys, arg)
+	// 模拟本地事务执行
+	time.Sleep(100 * time.Millisecond)
+	// 这里可以执行实际的本地事务逻辑
+	return client.CommitMessage
+}
+
+func (l *ExampleTransactionListener) CheckLocalTransaction(msg *client.MessageExt) client.LocalTransactionState {
+	fmt.Printf("检查本地事务状态 - MsgId: %s\n", msg.MsgId)
+	// 模拟检查本地事务状态
+	// 这里应该检查实际的本地事务状态
+	return client.CommitMessage
 }

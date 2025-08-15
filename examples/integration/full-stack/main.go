@@ -13,11 +13,16 @@ import (
 
 // 集成测试配置
 type IntegrationTestConfig struct {
-	NameServerPort int
-	BrokerPort     int
-	TestDuration   time.Duration
-	MessageCount   int
-	Concurrency    int
+	NameServerPort   int
+	BrokerPort       int
+	TestDuration     time.Duration
+	MessageCount     int
+	Concurrency      int
+	ConsumerType     string // "basic", "push", "pull", "simple"
+	LoadBalanceType  string // "avg", "hash", "room"
+	EnableTrace      bool
+	EnableBatch      bool
+	EnableTransaction bool
 }
 
 // 测试结果
@@ -36,6 +41,27 @@ type IntegrationTestListener struct {
 	receivedCount int
 	messages      []*client.MessageExt
 	latencies     []time.Duration
+}
+
+// IntegrationTransactionListener 集成测试事务监听器
+type IntegrationTransactionListener struct{}
+
+func (l *IntegrationTransactionListener) ExecuteLocalTransaction(msg *client.Message, arg interface{}) client.LocalTransactionState {
+	// 模拟本地事务执行
+	msgId := msg.GetProperty("msgId")
+	fmt.Printf("执行本地事务: %s\n", msgId)
+	
+	// 模拟事务成功
+	return client.CommitMessage
+}
+
+func (l *IntegrationTransactionListener) CheckLocalTransaction(msg *client.MessageExt) client.LocalTransactionState {
+	// 模拟事务状态检查
+	msgId := msg.MsgId
+	fmt.Printf("检查本地事务状态: %s\n", msgId)
+	
+	// 模拟事务已提交
+	return client.CommitMessage
 }
 
 func (l *IntegrationTestListener) ConsumeMessage(msgs []*client.MessageExt) client.ConsumeResult {
@@ -87,11 +113,16 @@ func main() {
 
 	// 测试配置
 	config := &IntegrationTestConfig{
-		NameServerPort: 9876,
-		BrokerPort:     10911,
-		TestDuration:   30 * time.Second,
-		MessageCount:   1000,
-		Concurrency:    5,
+		NameServerPort:   9876,
+		BrokerPort:       10911,
+		TestDuration:     30 * time.Second,
+		MessageCount:     1000,
+		Concurrency:      5,
+		ConsumerType:     "push",    // 使用Push消费者
+		LoadBalanceType:  "avg",     // 平均分配策略
+		EnableTrace:      true,      // 启用消息追踪
+		EnableBatch:      true,      // 启用批量发送
+		EnableTransaction: false,    // 不启用事务消息
 	}
 
 	printTestConfig(config)
@@ -114,6 +145,11 @@ func printTestConfig(config *IntegrationTestConfig) {
 	fmt.Printf("测试时长: %v\n", config.TestDuration)
 	fmt.Printf("消息数量: %d\n", config.MessageCount)
 	fmt.Printf("并发数: %d\n", config.Concurrency)
+	fmt.Printf("消费者类型: %s\n", config.ConsumerType)
+	fmt.Printf("负载均衡策略: %s\n", config.LoadBalanceType)
+	fmt.Printf("启用消息追踪: %t\n", config.EnableTrace)
+	fmt.Printf("启用批量发送: %t\n", config.EnableBatch)
+	fmt.Printf("启用事务消息: %t\n", config.EnableTransaction)
 }
 
 // 运行集成测试
@@ -162,7 +198,7 @@ func runIntegrationTest(config *IntegrationTestConfig) (*TestResult, error) {
 		messages:  make([]*client.MessageExt, 0),
 		latencies: make([]time.Duration, 0),
 	}
-	consumer, err := startConsumer(nameServerAddr, topicName, listener)
+	consumer, err := startConsumer(nameServerAddr, topicName, listener, config)
 	if err != nil {
 		return nil, fmt.Errorf("启动消费者失败: %v", err)
 	}
@@ -174,7 +210,7 @@ func runIntegrationTest(config *IntegrationTestConfig) (*TestResult, error) {
 
 	// 5. 启动生产者并发送消息
 	fmt.Println("\n=== 步骤5: 启动生产者并发送消息 ===")
-	producer, err := startProducer(nameServerAddr)
+	producer, err := startProducer(nameServerAddr, config)
 	if err != nil {
 		return nil, fmt.Errorf("启动生产者失败: %v", err)
 	}
@@ -184,7 +220,7 @@ func runIntegrationTest(config *IntegrationTestConfig) (*TestResult, error) {
 	// 6. 执行消息发送测试
 	fmt.Println("\n=== 步骤6: 执行消息发送测试 ===")
 	startTime := time.Now()
-	sentCount, sendErrors := sendMessages(producer, topicName, config.MessageCount, config.Concurrency)
+	sentCount, sendErrors := sendMessages(producer, topicName, config.MessageCount, config.Concurrency, config)
 	sendDuration := time.Since(startTime)
 
 	result.TotalSent = sentCount
@@ -254,17 +290,80 @@ func createTestTopic(nameServerAddr, topicName string) error {
 }
 
 // 启动消费者
-func startConsumer(nameServerAddr, topicName string, listener *IntegrationTestListener) (*client.Consumer, error) {
-	config := &client.ConsumerConfig{
-		GroupName:      "IntegrationTestConsumerGroup",
-		NameServerAddr: nameServerAddr,
-		ConsumeFromWhere: client.ConsumeFromFirstOffset,
-		MessageModel:   client.Clustering,
-		PullInterval:   1 * time.Second,
+func startConsumer(nameServerAddr, topicName string, listener *IntegrationTestListener, config *IntegrationTestConfig) (*client.Consumer, error) {
+	// 创建消费者
+	var consumer *client.Consumer
+	switch config.ConsumerType {
+	case "push":
+		pushConsumer := client.NewPushConsumer("IntegrationTestConsumerGroup")
+		pushConsumer.Consumer.SetNameServerAddr(nameServerAddr)
+		
+		// 设置负载均衡策略
+		switch config.LoadBalanceType {
+		case "hash":
+			pushConsumer.SetLoadBalanceStrategy(client.NewConsistentHashAllocateStrategy(160))
+		case "room":
+			pushConsumer.SetLoadBalanceStrategy(client.NewMachineRoomAllocateStrategy(nil))
+		default:
+			pushConsumer.SetLoadBalanceStrategy(&client.AverageAllocateStrategy{})
+		}
+		
+		// 启用消息追踪
+		if config.EnableTrace {
+			err := pushConsumer.Consumer.EnableTrace(nameServerAddr, "RMQ_SYS_TRACE_TOPIC")
+			if err != nil {
+				log.Printf("启用消息追踪失败: %v", err)
+			}
+		}
+		
+		// 注册消息监听器
+		pushConsumer.RegisterMessageListener(listener)
+		consumer = pushConsumer.Consumer
+		
+	case "pull":
+		pullConsumer := client.NewPullConsumer("IntegrationTestConsumerGroup")
+		pullConsumer.Consumer.SetNameServerAddr(nameServerAddr)
+		
+		// 启用消息追踪
+		if config.EnableTrace {
+			err := pullConsumer.Consumer.EnableTrace(nameServerAddr, "RMQ_SYS_TRACE_TOPIC")
+			if err != nil {
+				log.Printf("启用消息追踪失败: %v", err)
+			}
+		}
+		
+		consumer = pullConsumer.Consumer
+		
+	case "simple":
+		simpleConsumer := client.NewSimpleConsumer("IntegrationTestConsumerGroup")
+		simpleConsumer.Consumer.SetNameServerAddr(nameServerAddr)
+		
+		// 启用消息追踪
+		if config.EnableTrace {
+			err := simpleConsumer.Consumer.EnableTrace(nameServerAddr, "RMQ_SYS_TRACE_TOPIC")
+			if err != nil {
+				log.Printf("启用消息追踪失败: %v", err)
+			}
+		}
+		
+		consumer = simpleConsumer.Consumer
+		
+	default:
+		// 默认使用基础消费者
+		consumerConfig := &client.ConsumerConfig{
+			GroupName:        "IntegrationTestConsumerGroup",
+			NameServerAddr:   nameServerAddr,
+			ConsumeFromWhere: client.ConsumeFromFirstOffset,
+			MessageModel:     client.Clustering,
+			PullInterval:     1 * time.Second,
+		}
+		consumer = client.NewConsumer(consumerConfig)
 	}
 
-	consumer := client.NewConsumer(config)
-	consumer.Subscribe(topicName, "*", listener)
+	// 订阅Topic（对于非Push消费者）
+	if config.ConsumerType != "push" {
+		consumer.Subscribe(topicName, "*", listener)
+	}
 
 	if err := consumer.Start(); err != nil {
 		return nil, err
@@ -274,19 +373,46 @@ func startConsumer(nameServerAddr, topicName string, listener *IntegrationTestLi
 }
 
 // 启动生产者
-func startProducer(nameServerAddr string) (*client.Producer, error) {
-	producer := client.NewProducer("IntegrationTestProducerGroup")
-	producer.SetNameServers([]string{nameServerAddr})
-
-	if err := producer.Start(); err != nil {
-		return nil, err
+func startProducer(nameServerAddr string, config *IntegrationTestConfig) (*client.Producer, error) {
+	var producer *client.Producer
+	
+	if config.EnableTransaction {
+		// 创建事务生产者
+		txListener := &IntegrationTransactionListener{}
+		txProducer := client.NewTransactionProducer("IntegrationTestTxProducerGroup", txListener)
+		txProducer.SetNameServers([]string{nameServerAddr})
+		
+		// 启用消息追踪
+		if config.EnableTrace {
+			txProducer.EnableTrace("integration_test", "test_instance")
+		}
+		
+		if err := txProducer.Start(); err != nil {
+			return nil, err
+		}
+		
+		// 获取事务生产者内嵌的生产者
+		producer = txProducer.Producer
+	} else {
+		// 创建普通生产者
+		producer = client.NewProducer("IntegrationTestProducerGroup")
+		producer.SetNameServers([]string{nameServerAddr})
+		
+		// 启用消息追踪
+		if config.EnableTrace {
+			producer.EnableTrace("integration_test", "test_instance")
+		}
+		
+		if err := producer.Start(); err != nil {
+			return nil, err
+		}
 	}
 
 	return producer, nil
 }
 
 // 发送消息
-func sendMessages(producer *client.Producer, topicName string, messageCount, concurrency int) (int, []error) {
+func sendMessages(producer *client.Producer, topicName string, messageCount, concurrency int, config *IntegrationTestConfig) (int, []error) {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	sentCount := 0
@@ -309,7 +435,31 @@ func sendMessages(producer *client.Producer, topicName string, messageCount, con
 			).SetTags("INTEGRATION_TEST").SetKeys(fmt.Sprintf("test_key_%d", index+1)).SetProperty("messageIndex", fmt.Sprintf("%d", index+1)).SetProperty("sendTime", time.Now().Format(time.RFC3339Nano))
 
 			// 发送消息
-			_, err := producer.SendSync(msg)
+			var err error
+			if config.EnableTransaction && index%5 == 0 {
+				// 事务消息发送（每5条消息发送一条事务消息）
+				txMsg := client.NewMessage(
+					topicName,
+					[]byte(fmt.Sprintf("事务集成测试消息 #%d", index+1)),
+				).SetTags("TX_TEST").SetKeys(fmt.Sprintf("tx_key_%d", index+1)).SetProperty("msgId", fmt.Sprintf("tx_msg_%d", index+1))
+				
+				// 注意：这里需要使用事务生产者发送，但由于我们返回的是普通生产者，
+				// 实际项目中应该重新设计接口或使用类型断言
+				_, err = producer.SendSync(txMsg)
+			} else if config.EnableBatch && index%10 == 0 && index+9 < messageCount {
+				// 批量发送（每10条消息一批）
+				batchMsgs := make([]*client.Message, 0, 10)
+				for j := 0; j < 10 && index+j < messageCount; j++ {
+					batchMsg := client.NewMessage(
+						topicName,
+						[]byte(fmt.Sprintf("批量集成测试消息 #%d", index+j+1)),
+					).SetTags("BATCH_TEST").SetKeys(fmt.Sprintf("batch_key_%d", index+j+1))
+					batchMsgs = append(batchMsgs, batchMsg)
+				}
+				_, err = producer.SendBatchMessages(batchMsgs)
+			} else {
+				_, err = producer.SendSync(msg)
+			}
 
 			mu.Lock()
 			if err != nil {

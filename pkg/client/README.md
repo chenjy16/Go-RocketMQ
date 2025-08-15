@@ -6,9 +6,16 @@
 
 - 🚀 **高性能**: 支持同步、异步和单向发送模式
 - 🔄 **可靠性**: 内置重试机制和故障转移
-- 📊 **监控**: 提供详细的发送和消费统计
+- 📊 **监控**: 提供详细的发送和消费统计，支持消息追踪
 - 🛡️ **安全**: 支持消息属性和标签过滤
 - 🎯 **易用**: 简洁的API设计，易于集成
+- 🔧 **多消费者类型**: 支持PushConsumer、PullConsumer和SimpleConsumer
+- ⚖️ **负载均衡**: 支持多种负载均衡策略
+- 🔍 **消息过滤**: 支持Tag和SQL92表达式过滤
+- 📈 **事务消息**: 支持分布式事务消息
+- ⏰ **延时消息**: 支持定时和延时消息发送
+- 📦 **批量消息**: 支持批量消息发送和消费
+- 🔄 **顺序消息**: 支持全局和分区顺序消息
 
 ## 安装
 
@@ -59,6 +66,8 @@ func main() {
 
 ### 消费消息
 
+#### 基础消费者
+
 ```go
 package main
 
@@ -68,7 +77,7 @@ import (
     "os/signal"
     "syscall"
     
-    client "github.com/your-org/go-rocketmq-client"
+    client "github.com/chenjy16/go-rocketmq-client"
 )
 
 // 实现消息监听器
@@ -93,6 +102,12 @@ func main() {
     
     // 创建消费者
     consumer := client.NewConsumer(config)
+    
+    // 设置负载均衡策略
+    consumer.SetLoadBalanceStrategy(&client.AverageAllocateStrategy{})
+    
+    // 启用消息追踪
+    consumer.EnableTrace("trace_topic", "trace_group")
     
     // 订阅Topic
     listener := &MyMessageListener{}
@@ -159,9 +174,68 @@ err := producer.SendAsync(msg, func(result *client.SendResult, err error) {
 err := producer.SendOneway(msg)
 ```
 
+#### 生产者增强功能
+
+##### 启用消息追踪
+```go
+// 启用消息追踪
+err := producer.EnableTrace("RMQ_SYS_TRACE_TOPIC", "trace_group")
+if err != nil {
+    log.Printf("Failed to enable trace: %v", err)
+}
+```
+
+##### 事务消息
+```go
+// 创建事务生产者
+txProducer := client.NewTransactionProducer(&client.ProducerConfig{
+    GroupName: "tx_producer_group",
+})
+
+// 设置事务监听器
+txProducer.SetTransactionListener(&MyTransactionListener{})
+
+// 发送事务消息
+msg := client.NewMessage("TransactionTopic", "Hello Transaction")
+result, err := txProducer.SendMessageInTransaction(msg, nil)
+if err != nil {
+    log.Printf("Failed to send transaction message: %v", err)
+}
+```
+
+##### 延时消息
+```go
+// 发送延时消息
+msg := client.NewMessage("DelayTopic", "Hello Delay")
+msg.SetDelayTimeLevel(3) // 延时级别3 (10秒)
+
+result, err := producer.SendSync(msg)
+if err != nil {
+    log.Printf("Failed to send delay message: %v", err)
+}
+```
+
+##### 批量消息
+```go
+// 创建批量消息
+messages := []*client.Message{
+    client.NewMessage("BatchTopic", "Message 1"),
+    client.NewMessage("BatchTopic", "Message 2"),
+    client.NewMessage("BatchTopic", "Message 3"),
+}
+
+// 发送批量消息
+result, err := producer.SendBatch(messages)
+if err != nil {
+    log.Printf("Failed to send batch messages: %v", err)
+}
+```
+
 ### Consumer API
 
 #### 创建消费者
+
+##### 基础消费者
 ```go
 config := &client.ConsumerConfig{
     GroupName:        "consumer_group",
@@ -170,6 +244,62 @@ config := &client.ConsumerConfig{
     MessageModel:     client.Clustering,
 }
 consumer := client.NewConsumer(config)
+```
+
+##### PushConsumer（推荐）
+```go
+pushConsumer := client.NewPushConsumer("push_consumer_group")
+pushConsumer.SetNameServers([]string{"127.0.0.1:9876"})
+pushConsumer.SetConsumeFromWhere(client.ConsumeFromLastOffset)
+pushConsumer.SetMessageModel(client.Clustering)
+pushConsumer.SetLoadBalanceStrategy(&client.AverageAllocateStrategy{})
+```
+
+##### PullConsumer
+```go
+pullConsumer := client.NewPullConsumer("pull_consumer_group")
+pullConsumer.SetNameServers([]string{"127.0.0.1:9876"})
+```
+
+##### SimpleConsumer
+```go
+simpleConsumer := client.NewSimpleConsumer("simple_consumer_group")
+simpleConsumer.SetNameServers([]string{"127.0.0.1:9876"})
+simpleConsumer.SetAwaitDuration(10 * time.Second)
+simpleConsumer.SetMaxMessageNum(16)
+```
+
+#### 消费者增强功能
+
+##### 设置负载均衡策略
+```go
+// 平均分配策略
+consumer.SetLoadBalanceStrategy(&client.AverageAllocateStrategy{})
+
+// 一致性哈希策略
+consumer.SetLoadBalanceStrategy(&client.ConsistentHashStrategy{})
+
+// 机房就近策略
+consumer.SetLoadBalanceStrategy(&client.RoomStrategy{})
+```
+
+##### 启用消息追踪
+```go
+err := consumer.EnableTrace("trace_topic", "trace_group")
+if err != nil {
+    log.Printf("Enable trace failed: %v", err)
+}
+```
+
+##### 设置消息过滤器
+```go
+// Tag过滤器
+tagFilter := &client.TagFilter{Tags: []string{"TagA", "TagB"}}
+consumer.SetMessageFilter(tagFilter)
+
+// SQL过滤器
+sqlFilter := &client.SQLFilter{Expression: "age > 18 AND region = 'beijing'"}
+consumer.SetMessageFilter(sqlFilter)
 ```
 
 #### 订阅Topic
@@ -251,6 +381,9 @@ type ConsumerConfig struct {
 - **合理设置超时**: 根据网络环境调整发送超时时间
 - **使用异步发送**: 对于高吞吐量场景，推荐使用异步发送
 - **设置消息键**: 为消息设置唯一键，便于问题排查
+- **启用消息追踪**: 有助于问题排查和监控
+- **事务消息**: 适用于需要保证本地事务与消息发送一致性的场景
+- **批量发送**: 可以提高吞吐量，但要注意批量大小限制
 
 ```go
 // 推荐的生产者配置
@@ -286,16 +419,43 @@ config := &client.ConsumerConfig{
 
 ### 3. 错误处理
 
+#### 生产者错误处理
+
 ```go
-// 生产者错误处理
+// 发送消息错误处理
 result, err := producer.SendSync(msg)
 if err != nil {
-    log.Printf("Send failed: %v", err)
-    // 根据错误类型进行相应处理
-    return
+    switch {
+    case strings.Contains(err.Error(), "timeout"):
+        log.Printf("Send timeout: %v", err)
+        // 重试逻辑
+    case strings.Contains(err.Error(), "broker not available"):
+        log.Printf("Broker not available: %v", err)
+        // 等待重连
+    default:
+        log.Printf("Send failed: %v", err)
+    }
 }
 
-// 消费者错误处理
+// 事务消息错误处理
+result, err := txProducer.SendMessageInTransaction(msg, nil)
+if err != nil {
+    log.Printf("Transaction message send failed: %v", err)
+    // 处理事务失败逻辑
+}
+
+// 批量消息错误处理
+result, err := producer.SendBatch(messages)
+if err != nil {
+    log.Printf("Batch send failed: %v", err)
+    // 可能需要拆分批量重试
+}
+```
+
+#### 消费者错误处理
+
+```go
+// Push消费者错误处理
 func (l *MyListener) ConsumeMessage(msgs []*client.MessageExt) client.ConsumeResult {
     for _, msg := range msgs {
         if err := processMessage(msg); err != nil {
@@ -304,6 +464,30 @@ func (l *MyListener) ConsumeMessage(msgs []*client.MessageExt) client.ConsumeRes
         }
     }
     return client.ConsumeSuccess
+}
+
+// Simple消费者错误处理
+messages, err := simpleConsumer.ReceiveMessage(10, 30*time.Second)
+if err != nil {
+    log.Printf("Receive message failed: %v", err)
+    return
+}
+
+for _, msg := range messages {
+    err := processMessage(msg)
+    if err != nil {
+        // 处理失败，可以选择重试或者改变不可见时间
+        err = simpleConsumer.ChangeInvisibleDuration(msg, 60*time.Second)
+        if err != nil {
+            log.Printf("Change invisible duration failed: %v", err)
+        }
+    } else {
+        // 处理成功，确认消息
+        err = simpleConsumer.AckMessage(msg)
+        if err != nil {
+            log.Printf("Ack message failed: %v", err)
+        }
+    }
 }
 ```
 
@@ -325,6 +509,30 @@ func (l *MyListener) ConsumeMessage(msgs []*client.MessageExt) client.ConsumeRes
    - 检查消费者线程数配置
    - 优化消费逻辑性能
    - 检查网络延迟
+
+4. **事务消息问题**
+   - 检查事务监听器实现
+   - 确认本地事务执行状态
+   - 检查事务回查逻辑
+   - 查看事务消息日志
+
+5. **负载均衡问题**
+   - 检查负载均衡策略配置
+   - 确认消费者实例数量
+   - 检查队列数量设置
+   - 查看Rebalance日志
+
+6. **消息过滤问题**
+   - 检查过滤器表达式语法
+   - 确认消息Tag设置
+   - 检查SQL过滤器编译
+   - 验证消息属性设置
+
+7. **消息追踪问题**
+   - 检查追踪功能是否启用
+   - 确认追踪Topic配置
+   - 检查追踪消费者组设置
+   - 查看追踪相关日志
 
 ### 日志配置
 

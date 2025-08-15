@@ -1,0 +1,323 @@
+# golangci-lint 配置文件
+# Go-RocketMQ 项目代码质量检查配置
+
+run:
+  # 超时时间
+  timeout: 5m
+  
+  # 要检查的目录
+  modules-download-mode: readonly
+  
+  # 跳过的目录
+  skip-dirs:
+    - vendor
+    - .git
+    - bin
+    - build
+    - coverage
+  
+  # 跳过的文件
+  skip-files:
+    - ".*\\.pb\\.go$"
+    - ".*_generated\\.go$"
+
+# 输出配置
+output:
+  # 输出格式: colored-line-number|line-number|json|tab|checkstyle|code-climate
+  format: colored-line-number
+  
+  # 打印检查器名称
+  print-issued-lines: true
+  print-linter-name: true
+  uniq-by-line: true
+  sort-results: true
+
+# 启用的检查器
+linters:
+  enable:
+    # 默认启用的检查器
+    - errcheck      # 检查未处理的错误
+    - gosimple      # 简化代码建议
+    - govet         # Go vet 检查
+    - ineffassign   # 检查无效赋值
+    - staticcheck   # 静态分析检查
+    - typecheck     # 类型检查
+    - unused        # 检查未使用的代码
+    
+    # 额外启用的检查器
+    - gofmt         # 格式化检查
+    - goimports     # import 检查
+    - golint        # Go lint 检查
+    - gosec         # 安全检查
+    - misspell      # 拼写检查
+    - unconvert     # 不必要的类型转换
+    - unparam       # 未使用的参数
+    - gocyclo       # 圈复杂度检查
+    - gocognit      # 认知复杂度检查
+    - goconst       # 常量检查
+    - gocritic      # Go critic 检查
+    - godot         # 注释句号检查
+    - gomnd         # 魔法数字检查
+    - goprintffuncname # printf 函数名检查
+    - lll           # 行长度检查
+    - nakedret      # naked return 检查
+    - nestif        # 嵌套 if 检查
+    - prealloc      # 预分配检查
+    - rowserrcheck  # sql.Rows.Err 检查
+    - sqlclosecheck # sql.Close 检查
+    - whitespace    # 空白字符检查
+    - wsl           # 空行检查
+    - dupl          # 重复代码检查
+    - funlen        # 函数长度检查
+    - gochecknoinits # 检查 init 函数
+    - gochecknoglobals # 检查全局变量
+    - godox         # TODO/FIXME 检查
+    - maligned      # 结构体字段对齐检查
+    - interfacer    # 接口建议
+    - scopelint     # 作用域检查
+
+  disable:
+    - deadcode      # 已废弃，使用 unused 替代
+    - varcheck      # 已废弃，使用 unused 替代
+    - structcheck   # 已废弃，使用 unused 替代
+
+# 检查器配置
+linters-settings:
+  # errcheck 配置
+  errcheck:
+    # 检查类型断言
+    check-type-assertions: true
+    # 检查空白标识符
+    check-blank: true
+    # 忽略的函数
+    ignore: fmt:.*,io/ioutil:^Read.*
+  
+  # gosec 配置
+  gosec:
+    # 严重性级别
+    severity: medium
+    # 置信度级别
+    confidence: medium
+    # 排除的规则
+    excludes:
+      - G204  # 子进程启动
+      - G304  # 文件路径
+  
+  # gocyclo 配置
+  gocyclo:
+    # 圈复杂度阈值
+    min-complexity: 15
+  
+  # gocognit 配置
+  gocognit:
+    # 认知复杂度阈值
+    min-complexity: 20
+  
+  # goconst 配置
+  goconst:
+    # 最小字符串长度
+    min-len: 3
+    # 最小出现次数
+    min-occurrences: 3
+    # 忽略测试文件
+    ignore-tests: true
+  
+  # gocritic 配置
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - style
+      - performance
+      - experimental
+    disabled-checks:
+      - commentedOutCode
+      - whyNoLint
+  
+  # gomnd 配置
+  gomnd:
+    settings:
+      mnd:
+        # 检查的类型
+        checks: argument,case,condition,operation,return,assign
+        # 忽略的数字
+        ignored-numbers: 0,1,2,3,10,100,1000
+        # 忽略的函数
+        ignored-functions: make,len,cap,append
+  
+  # lll 配置
+  lll:
+    # 行长度限制
+    line-length: 120
+    # 制表符宽度
+    tab-width: 4
+  
+  # nakedret 配置
+  nakedret:
+    # 最大函数行数
+    max-func-lines: 30
+  
+  # nestif 配置
+  nestif:
+    # 最小复杂度
+    min-complexity: 5
+  
+  # prealloc 配置
+  prealloc:
+    # 简单循环
+    simple: true
+    # 范围循环
+    range-loops: true
+    # for 循环
+    for-loops: false
+  
+  # whitespace 配置
+  whitespace:
+    multi-if: false
+    multi-func: false
+  
+  # wsl 配置
+  wsl:
+    # 严格追加
+    strict-append: true
+    # 允许赋值和调用之间的空行
+    allow-assign-and-call: true
+    # 允许赋值和任何内容之间的空行
+    allow-assign-and-anything: false
+    # 允许多行赋值
+    allow-multiline-assign: true
+    # 强制错误处理后的空行
+    force-err-cuddling: false
+  
+  # dupl 配置
+  dupl:
+    # 重复代码阈值
+    threshold: 100
+  
+  # funlen 配置
+  funlen:
+    # 函数行数限制
+    lines: 100
+    # 函数语句数限制
+    statements: 50
+  
+  # gochecknoglobals 配置
+  gochecknoglobals:
+    # 检查测试文件
+    check-tests: false
+  
+  # godox 配置
+  godox:
+    # 检查的关键词
+    keywords:
+      - NOTE
+      - OPTIMIZE
+      - HACK
+      - TODO
+      - BUG
+      - FIXME
+  
+  # maligned 配置
+  maligned:
+    # 建议新的结构体字段顺序
+    suggest-new: true
+  
+  # misspell 配置
+  misspell:
+    # 语言
+    locale: US
+    # 忽略的单词
+    ignore-words:
+      - someword
+
+# 问题配置
+issues:
+  # 排除默认的排除规则
+  exclude-use-default: false
+  
+  # 排除的规则
+  exclude:
+    # errcheck: Almost all programs ignore errors on these functions and in most cases it's ok
+    - Error return value of .((os\.)?std(out|err)\..*|.*Close|.*Flush|os\.Remove(All)?|.*printf?|os\.(Un)?Setenv). is not checked
+    
+    # golint: False positive when tests are defined in package 'test'
+    - func name will be used as test\.Test.* by other packages, and that stutters; consider calling this
+    
+    # govet: Common false positives
+    - (possible misuse of unsafe.Pointer|should have signature)
+    
+    # staticcheck: Developers tend to write in C-style with an explicit 'break' in a 'switch', so it's ok to ignore
+    - ineffective break statement. Did you mean to break out of the outer loop
+    
+    # gosec: Too many false-positives on 'unsafe' usage
+    - Use of unsafe calls should be audited
+    
+    # gosec: Too many false-positives for parametrized shell calls
+    - Subprocess launch(ed with variable|ing should be audited)
+    
+    # gosec: Duplicated errcheck checks
+    - G104
+    
+    # gocritic: Too many false-positives. Will be fixed in https://github.com/go-critic/go-critic/issues/926
+    - (unnamedResult|exitAfterDefer)
+  
+  # 排除的规则（按检查器）
+  exclude-rules:
+    # 测试文件的特殊规则
+    - path: _test\.go
+      linters:
+        - gomnd
+        - goconst
+        - funlen
+        - gochecknoglobals
+        - gocognit
+        - gocyclo
+        - lll
+        - dupl
+    
+    # 示例文件的特殊规则
+    - path: examples/
+      linters:
+        - gomnd
+        - goconst
+        - gochecknoglobals
+    
+    # 生成的文件
+    - path: \.pb\.go
+      linters:
+        - all
+    
+    # 忽略某些错误消息
+    - text: "weak cryptographic primitive"
+      linters:
+        - gosec
+    
+    - text: "Use of weak random number generator"
+      linters:
+        - gosec
+  
+  # 最大问题数量，0表示无限制
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  
+  # 显示所有问题
+  new: false
+  
+  # 修复问题
+  fix: false
+
+# 严重性配置
+severity:
+  # 默认严重性
+  default-severity: error
+  
+  # 规则
+  rules:
+    - linters:
+        - dupl
+      severity: info
+    - linters:
+        - gomnd
+      severity: warning
+    - linters:
+        - godox
+      severity: info

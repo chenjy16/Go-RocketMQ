@@ -19,6 +19,254 @@ type Producer struct {
 	mutex        sync.RWMutex
 	routeTable   map[string]*TopicRouteData
 	routeMutex   sync.RWMutex
+	// 延时消息调度器
+	delayScheduler *DelayMessageScheduler
+	// 批量消息处理器
+	batchProcessor *BatchMessageProcessor
+	// 消息追踪管理器
+	traceManager *TraceManager
+}
+
+// DelayMessageScheduler 延时消息调度器
+type DelayMessageScheduler struct {
+	producer     *Producer
+	delayQueue   chan *DelayMessageTask
+	running      bool
+	mutex        sync.RWMutex
+	stopChan     chan struct{}
+}
+
+// DelayMessageTask 延时消息任务
+type DelayMessageTask struct {
+	Message     *Message
+	DeliverTime time.Time
+	Callback    func(*SendResult, error)
+}
+
+// NewDelayMessageScheduler 创建延时消息调度器
+func NewDelayMessageScheduler(producer *Producer) *DelayMessageScheduler {
+	return &DelayMessageScheduler{
+		producer:   producer,
+		delayQueue: make(chan *DelayMessageTask, 1000),
+		running:    false,
+		stopChan:   make(chan struct{}),
+	}
+}
+
+// Start 启动延时消息调度器
+func (dms *DelayMessageScheduler) Start() {
+	dms.mutex.Lock()
+	defer dms.mutex.Unlock()
+	
+	if dms.running {
+		return
+	}
+	
+	dms.running = true
+	go dms.scheduleLoop()
+}
+
+// Stop 停止延时消息调度器
+func (dms *DelayMessageScheduler) Stop() {
+	dms.mutex.Lock()
+	defer dms.mutex.Unlock()
+	
+	if !dms.running {
+		return
+	}
+	
+	dms.running = false
+	close(dms.stopChan)
+}
+
+// ScheduleDelayMessage 调度延时消息
+func (dms *DelayMessageScheduler) ScheduleDelayMessage(msg *Message, deliverTime time.Time, callback func(*SendResult, error)) error {
+	task := &DelayMessageTask{
+		Message:     msg,
+		DeliverTime: deliverTime,
+		Callback:    callback,
+	}
+	
+	select {
+	case dms.delayQueue <- task:
+		return nil
+	default:
+		return fmt.Errorf("delay queue is full")
+	}
+}
+
+// scheduleLoop 调度循环
+func (dms *DelayMessageScheduler) scheduleLoop() {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	
+	var pendingTasks []*DelayMessageTask
+	
+	for {
+		select {
+		case <-dms.stopChan:
+			return
+		case task := <-dms.delayQueue:
+			pendingTasks = append(pendingTasks, task)
+		case <-ticker.C:
+			now := time.Now()
+			var remainingTasks []*DelayMessageTask
+			
+			for _, task := range pendingTasks {
+				if now.After(task.DeliverTime) || now.Equal(task.DeliverTime) {
+					// 时间到了，发送消息
+					go dms.sendDelayedMessage(task)
+				} else {
+					// 时间未到，继续等待
+					remainingTasks = append(remainingTasks, task)
+				}
+			}
+			
+			pendingTasks = remainingTasks
+		}
+	}
+}
+
+// sendDelayedMessage 发送延时消息
+func (dms *DelayMessageScheduler) sendDelayedMessage(task *DelayMessageTask) {
+	result, err := dms.producer.SendSync(task.Message)
+	if task.Callback != nil {
+		task.Callback(result, err)
+	}
+}
+
+// BatchMessageProcessor 批量消息处理器
+type BatchMessageProcessor struct {
+	producer     *Producer
+	batchQueue   chan *BatchMessageTask
+	running      bool
+	mutex        sync.RWMutex
+	stopChan     chan struct{}
+	batchSize    int
+	batchTimeout time.Duration
+}
+
+// BatchMessageTask 批量消息任务
+type BatchMessageTask struct {
+	Messages []*Message
+	Callback func(*SendResult, error)
+}
+
+// NewBatchMessageProcessor 创建批量消息处理器
+func NewBatchMessageProcessor(producer *Producer) *BatchMessageProcessor {
+	return &BatchMessageProcessor{
+		producer:     producer,
+		batchQueue:   make(chan *BatchMessageTask, 1000),
+		running:      false,
+		stopChan:     make(chan struct{}),
+		batchSize:    32,  // 默认批量大小
+		batchTimeout: 10 * time.Millisecond, // 默认批量超时
+	}
+}
+
+// Start 启动批量消息处理器
+func (bmp *BatchMessageProcessor) Start() {
+	bmp.mutex.Lock()
+	defer bmp.mutex.Unlock()
+	
+	if bmp.running {
+		return
+	}
+	
+	bmp.running = true
+	go bmp.batchProcessLoop()
+}
+
+// Stop 停止批量消息处理器
+func (bmp *BatchMessageProcessor) Stop() {
+	bmp.mutex.Lock()
+	defer bmp.mutex.Unlock()
+	
+	if !bmp.running {
+		return
+	}
+	
+	bmp.running = false
+	close(bmp.stopChan)
+}
+
+// AddBatchTask 添加批量消息任务
+func (bmp *BatchMessageProcessor) AddBatchTask(messages []*Message, callback func(*SendResult, error)) error {
+	task := &BatchMessageTask{
+		Messages: messages,
+		Callback: callback,
+	}
+	
+	select {
+	case bmp.batchQueue <- task:
+		return nil
+	default:
+		return fmt.Errorf("batch queue is full")
+	}
+}
+
+// SetBatchSize 设置批量大小
+func (bmp *BatchMessageProcessor) SetBatchSize(size int) {
+	bmp.mutex.Lock()
+	defer bmp.mutex.Unlock()
+	bmp.batchSize = size
+}
+
+// SetBatchTimeout 设置批量超时
+func (bmp *BatchMessageProcessor) SetBatchTimeout(timeout time.Duration) {
+	bmp.mutex.Lock()
+	defer bmp.mutex.Unlock()
+	bmp.batchTimeout = timeout
+}
+
+// batchProcessLoop 批量处理循环
+func (bmp *BatchMessageProcessor) batchProcessLoop() {
+	ticker := time.NewTicker(bmp.batchTimeout)
+	defer ticker.Stop()
+	
+	var pendingTasks []*BatchMessageTask
+	
+	for {
+		select {
+		case <-bmp.stopChan:
+			// 处理剩余任务
+			if len(pendingTasks) > 0 {
+				bmp.processBatchTasks(pendingTasks)
+			}
+			return
+		case task := <-bmp.batchQueue:
+			pendingTasks = append(pendingTasks, task)
+			
+			// 检查是否达到批量大小
+			if len(pendingTasks) >= bmp.batchSize {
+				bmp.processBatchTasks(pendingTasks)
+				pendingTasks = nil
+				ticker.Reset(bmp.batchTimeout)
+			}
+		case <-ticker.C:
+			// 超时处理
+			if len(pendingTasks) > 0 {
+				bmp.processBatchTasks(pendingTasks)
+				pendingTasks = nil
+			}
+			ticker.Reset(bmp.batchTimeout)
+		}
+	}
+}
+
+// processBatchTasks 处理批量任务
+func (bmp *BatchMessageProcessor) processBatchTasks(tasks []*BatchMessageTask) {
+	for _, task := range tasks {
+		go bmp.sendBatchMessages(task)
+	}
+}
+
+// sendBatchMessages 发送批量消息
+func (bmp *BatchMessageProcessor) sendBatchMessages(task *BatchMessageTask) {
+	result, err := bmp.producer.SendBatchMessages(task.Messages)
+	if task.Callback != nil {
+		task.Callback(result, err)
+	}
 }
 
 // ProducerConfig 生产者配置
@@ -45,11 +293,23 @@ func NewProducer(groupName string) *Producer {
 		MaxMessageSize:                   1024 * 1024 * 4, // 4MB
 	}
 
-	return &Producer{
+	p := &Producer{
 		config:      config,
 		shutdown:    make(chan struct{}),
 		routeTable:  make(map[string]*TopicRouteData),
 	}
+	
+	// 初始化延时消息调度器
+	p.delayScheduler = NewDelayMessageScheduler(p)
+	
+	// 初始化批量消息处理器
+	p.batchProcessor = NewBatchMessageProcessor(p)
+	
+	// 初始化消息追踪管理器（默认不启用）
+	p.traceManager = NewTraceManager(nil)
+	p.traceManager.SetEnabled(false)
+	
+	return p
 }
 
 // SetNameServers 设置NameServer地址
@@ -73,6 +333,17 @@ func (p *Producer) Start() error {
 
 	// 启动路由更新任务
 	go p.updateTopicRouteInfoFromNameServer()
+	
+	// 启动延时消息调度器
+	p.delayScheduler.Start()
+	
+	// 启动批量消息处理器
+	p.batchProcessor.Start()
+	
+	// 启动消息追踪管理器
+	if p.traceManager != nil {
+		p.traceManager.Start()
+	}
 
 	p.started = true
 	return nil
@@ -85,6 +356,17 @@ func (p *Producer) Shutdown() {
 
 	if !p.started {
 		return
+	}
+
+	// 停止延时消息调度器
+	p.delayScheduler.Stop()
+	
+	// 停止批量消息处理器
+	p.batchProcessor.Stop()
+	
+	// 停止消息追踪管理器
+	if p.traceManager != nil {
+		p.traceManager.Stop()
 	}
 
 	close(p.shutdown)
@@ -118,20 +400,52 @@ func (p *Producer) SendSyncWithTimeout(msg *Message, timeout time.Duration) (*Se
 		return nil, fmt.Errorf("message body size exceeds limit: %d", p.config.MaxMessageSize)
 	}
 
+	// 创建生产者追踪上下文
+	var traceCtx *TraceContext
+	if p.traceManager != nil && p.traceManager.IsEnabled() {
+		traceCtx = CreateProduceTraceContext(p.config.GroupName, msg)
+		traceCtx.TimeStamp = time.Now().UnixMilli()
+	}
+
+	start := time.Now()
+
 	// 获取Topic路由信息
 	routeData := p.getTopicRouteData(msg.Topic)
 	if routeData == nil {
+		if traceCtx != nil {
+			traceCtx.Success = false
+			traceCtx.CostTime = time.Since(start).Milliseconds()
+			p.traceManager.TraceMessage(traceCtx)
+		}
 		return nil, fmt.Errorf("no route data for topic: %s", msg.Topic)
 	}
 
 	// 选择消息队列
 	mq := p.selectMessageQueue(routeData, msg.Topic)
 	if mq == nil {
+		if traceCtx != nil {
+			traceCtx.Success = false
+			traceCtx.CostTime = time.Since(start).Milliseconds()
+			p.traceManager.TraceMessage(traceCtx)
+		}
 		return nil, fmt.Errorf("no available message queue for topic: %s", msg.Topic)
 	}
 
 	// 发送消息到指定队列
-	return p.sendMessageToQueue(msg, mq, timeout)
+	result, err := p.sendMessageToQueue(msg, mq, timeout)
+
+	// 更新追踪信息
+	if traceCtx != nil {
+		traceCtx.Success = (err == nil)
+		traceCtx.CostTime = time.Since(start).Milliseconds()
+		if result != nil {
+			traceCtx.TraceBeans[0].MsgId = result.MsgId
+			traceCtx.RequestId = result.MsgId
+		}
+		p.traceManager.TraceMessage(traceCtx)
+	}
+
+	return result, err
 }
 
 // SendAsync 异步发送消息
@@ -161,6 +475,122 @@ func (p *Producer) SendOneway(msg *Message) error {
 	// 简化实现，实际应该不等待响应
 	_, err := p.SendSync(msg)
 	return err
+}
+
+// SendDelayMessageAsync 异步发送延时消息
+func (p *Producer) SendDelayMessageAsync(msg *Message, delayLevel int32, callback func(*SendResult, error)) error {
+	if !p.started {
+		return fmt.Errorf("producer not started")
+	}
+	
+	if delayLevel < 1 || delayLevel > 18 {
+		return fmt.Errorf("invalid delay level: %d, should be 1-18", delayLevel)
+	}
+	
+	// 计算延时时间
+	delayDuration := p.getDelayDuration(delayLevel)
+	deliverTime := time.Now().Add(delayDuration)
+	
+	// 设置延时级别
+	msg.SetDelayTimeLevel(delayLevel)
+	msg.SetProperty("DELAY_MESSAGE", "true")
+	
+	// 调度延时消息
+	return p.delayScheduler.ScheduleDelayMessage(msg, deliverTime, callback)
+}
+
+// SendScheduledMessageAsync 异步发送定时消息
+func (p *Producer) SendScheduledMessageAsync(msg *Message, deliverTime time.Time, callback func(*SendResult, error)) error {
+	if !p.started {
+		return fmt.Errorf("producer not started")
+	}
+	
+	if deliverTime.Before(time.Now()) {
+		return fmt.Errorf("deliver time should be in the future")
+	}
+	
+	// 设置开始投递时间
+	msg.SetStartDeliverTime(deliverTime.UnixMilli())
+	msg.SetProperty("SCHEDULED_MESSAGE", "true")
+	
+	// 调度延时消息
+	return p.delayScheduler.ScheduleDelayMessage(msg, deliverTime, callback)
+}
+
+// getDelayDuration 根据延时级别获取延时时间
+func (p *Producer) getDelayDuration(delayLevel int32) time.Duration {
+	switch delayLevel {
+	case 1:
+		return 1 * time.Second
+	case 2:
+		return 5 * time.Second
+	case 3:
+		return 10 * time.Second
+	case 4:
+		return 30 * time.Second
+	case 5:
+		return 1 * time.Minute
+	case 6:
+		return 2 * time.Minute
+	case 7:
+		return 3 * time.Minute
+	case 8:
+		return 4 * time.Minute
+	case 9:
+		return 5 * time.Minute
+	case 10:
+		return 6 * time.Minute
+	case 11:
+		return 7 * time.Minute
+	case 12:
+		return 8 * time.Minute
+	case 13:
+		return 9 * time.Minute
+	case 14:
+		return 10 * time.Minute
+	case 15:
+		return 20 * time.Minute
+	case 16:
+		return 30 * time.Minute
+	case 17:
+		return 1 * time.Hour
+	case 18:
+		return 2 * time.Hour
+	default:
+		return 1 * time.Second
+	}
+}
+
+// SendBatchMessagesAsync 异步发送批量消息
+func (p *Producer) SendBatchMessagesAsync(messages []*Message, callback func(*SendResult, error)) error {
+	if !p.started {
+		return fmt.Errorf("producer not started")
+	}
+	
+	if len(messages) == 0 {
+		return fmt.Errorf("messages list is empty")
+	}
+	
+	// 验证所有消息都属于同一个Topic
+	topic := messages[0].Topic
+	for _, msg := range messages {
+		if msg.Topic != topic {
+			return fmt.Errorf("all messages in batch must have the same topic")
+		}
+	}
+	
+	// 添加到批量处理器
+	return p.batchProcessor.AddBatchTask(messages, callback)
+}
+
+// SetBatchSize 设置批量大小
+func (p *Producer) SetBatchSize(size int) {
+	p.batchProcessor.SetBatchSize(size)
+}
+
+// SetBatchTimeout 设置批量超时
+func (p *Producer) SetBatchTimeout(timeout time.Duration) {
+	p.batchProcessor.SetBatchTimeout(timeout)
 }
 
 // getTopicRouteData 获取Topic路由数据
@@ -397,5 +827,45 @@ func DefaultProducerConfig() *ProducerConfig {
 		RetryTimesWhenSendAsyncFailed:    2,
 		RetryAnotherBrokerWhenNotStoreOK: false,
 		MaxMessageSize:                   1024 * 1024 * 4,
+	}
+}
+
+// EnableTrace 启用消息追踪
+func (p *Producer) EnableTrace(nameServerAddr string, traceTopic string) error {
+	if p.traceManager == nil {
+		return fmt.Errorf("trace manager not initialized")
+	}
+
+	// 创建追踪分发器
+	dispatcher := NewDefaultTraceDispatcher(nameServerAddr, traceTopic)
+	p.traceManager = NewTraceManager(dispatcher)
+	p.traceManager.SetEnabled(true)
+
+	// 如果生产者已启动，启动追踪管理器
+	if p.started {
+		return p.traceManager.Start()
+	}
+
+	return nil
+}
+
+// DisableTrace 禁用消息追踪
+func (p *Producer) DisableTrace() {
+	if p.traceManager != nil {
+		p.traceManager.SetEnabled(false)
+	}
+}
+
+// AddTraceHook 添加追踪钩子
+func (p *Producer) AddTraceHook(hook TraceHook) {
+	if p.traceManager != nil {
+		p.traceManager.AddHook(hook)
+	}
+}
+
+// RemoveTraceHook 移除追踪钩子
+func (p *Producer) RemoveTraceHook(hookName string) {
+	if p.traceManager != nil {
+		p.traceManager.RemoveHook(hookName)
 	}
 }
