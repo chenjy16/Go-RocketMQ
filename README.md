@@ -1,47 +1,16 @@
 # Go-RocketMQ
 
-[![Go Version](https://img.shields.io/badge/Go-1.19+-blue.svg)](https://golang.org)
-[![License](https://img.shields.io/badge/License-Apache%202.0-green.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Build Status](https://img.shields.io/badge/Build-Passing-brightgreen.svg)](https://github.com/your-org/go-rocketmq)
+## Project Overview
 
+Go-RocketMQ is a Go language implementation that provides complete message queue functionality, including message production, consumption, routing management, and other core features. The project adopts modern Go language features and offers advantages such as simple deployment, excellent performance, and low resource consumption.
 
-## 项目概述
+### Performance Goals
+- Low latency (< 1ms)
+- High throughput (> 1 million TPS)
+- Horizontal scaling capability
+- TB-level message storage
 
-Go-RocketMQ 是Go 语言实现，提供了完整的消息队列功能，包括消息生产、消费、路由管理等核心特性。项目采用现代化的 Go 语言特性，具有部署简单、性能优异、资源占用低等优势。
-
-## 核心功能
-
-### ✅ 已实现功能
-- [x] NameServer 服务注册与发现
-- [x] Broker 消息存储和管理
-- [x] Producer 多种发送模式 (同步/异步/单向)
-- [x] Consumer 消息订阅和消费
-- [x] Topic 路由管理
-- [x] 消息队列负载均衡
-- [x] 完整的消息发送和接收流程
-- [x] TCP 网络通信协议
-- [x] JSON 消息序列化
-- [x] 性能测试工具和监控系统
-- [x] Web 监控界面
-- [x] 完整的端到端测试
-
-### ⏳ 待实现功能
-- [ ] 消息持久化存储优化
-- [ ] 集群模式支持
-- [ ] 事务消息
-- [ ] 顺序消息
-- [ ] 延时消息
-- [ ] 消息过滤
-- [ ] 消费重试机制
-- [ ] 死信队列
-
-### 性能目标
-- 低延迟（< 1ms）
-- 高吞吐量（> 100万 TPS）
-- 横向扩展能力
-- TB级消息存储
-
-## 架构设计
+## Architecture Design
 
 ```
 ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
@@ -77,195 +46,212 @@ Go-RocketMQ 是Go 语言实现，提供了完整的消息队列功能，包括�
 └─────────────┘    └─────────────┘    └─────────────┘
 ```
 
-## 核心组件
+## Core Components
 
-### 1. NameServer (名称服务器)
-- **位置**: `pkg/nameserver/nameserver.go`
-- **功能**: 
-  - 管理 Broker 的路由信息
-  - 提供 Topic 路由数据查询
-  - 维护集群拓扑信息
-  - 检测 Broker 存活状态
-- **端口**: 9876 (默认)
+### 1. NameServer
+- **Location**: `pkg/nameserver/nameserver.go`
+- **Functions**: 
+  - Manage Broker routing information
+  - Provide Topic routing data queries
+  - Maintain cluster topology information
+  - Detect Broker health status
+- **Port**: 9876 (default)
 
-### 2. Broker (消息代理)
-- **位置**: `pkg/broker/broker.go`
-- **功能**:
-  - 消息存储和管理
-  - 处理生产者发送的消息
-  - 响应消费者的拉取请求
-  - Topic 和队列管理
-  - 向 NameServer 注册和发送心跳
-- **端口**: 10911 (默认), 10912 (HA服务)
+### 2. Broker (Message Broker)
+- **Location**: `pkg/broker/broker.go`
+- **Functions**:
+  - Message storage and management
+  - Handle messages sent by producers
+  - Respond to consumer pull requests
+  - Topic and queue management
+  - Register with NameServer and send heartbeats
+- **Port**: 10911 (default), 10912 (HA service)
 
-### 3. Producer (生产者客户端)
-- **位置**: `pkg/client/producer.go`
-- **功能**:
-  - 同步发送消息 (SendSync)
-  - 异步发送消息 (SendAsync)
-  - 单向发送消息 (SendOneway)
-  - 自动路由选择
-  - 故障转移
+### 3. Producer (Producer Client)
+- **Location**: `pkg/client/producer.go`
+- **Functions**:
+  - Synchronous message sending (SendSync)
+  - Asynchronous message sending (SendAsync)
+  - One-way message sending (SendOneway)
+  - Automatic route selection
+  - Failover
 
-### 4. Consumer (消费者客户端)
-- **位置**: `pkg/client/consumer.go`
-- **功能**:
-  - Topic 订阅管理
-  - 消息拉取和消费
-  - 消费进度管理
-  - 负载均衡
-  - 消费重试机制
-  - Push 模式 (推送) 和 Pull 模式 (拉取)
+### 4. Consumer (Consumer Client)
+- **Location**: `pkg/client/consumer.go`
+- **Functions**:
+  - Topic subscription management
+  - Message pulling and consumption
+  - Consumption progress management
+  - Load balancing
+  - Consumption retry mechanism
+  - Push mode and Pull mode
 
-## 项目结构
+## Project Structure
 
 ```
 go-rocketmq/
-├── cmd/                    # 主程序入口
-│   ├── nameserver/        # NameServer 服务
-│   └── broker/            # Broker 服务
-├── pkg/                   # 核心包
-│   ├── client/           # 客户端实现
-│   ├── common/           # 通用数据结构
-│   ├── nameserver/       # NameServer 实现
-│   ├── broker/           # Broker 实现
-│   ├── protocol/         # 通信协议
-│   ├── store/            # 存储引擎
-│   ├── cluster/          # 集群管理
-│   ├── failover/         # 故障转移
-│   └── ha/               # 高可用
-├── examples/             # 示例程序
-│   ├── README.md         # 示例说明文档
-│   ├── basic/           # 基础示例
-│   │   ├── producer/    # 生产者基础示例
-│   │   ├── consumer/    # 消费者基础示例
-│   │   └── simple-demo/ # 简单演示
-│   ├── advanced/        # 高级特性示例
-│   │   ├── transaction/ # 事务消息
-│   │   ├── ordered/     # 顺序消息
-│   │   ├── delayed/     # 延时消息
-│   │   ├── batch/       # 批量消息
-│   │   └── filter/      # 消息过滤
-│   ├── cluster/         # 集群模式示例
-│   │   ├── multi-broker/# 多Broker集群
-│   │   ├── ha/          # 高可用配置
-│   │   └── load-balance/# 负载均衡
-│   ├── performance/     # 性能测试
-│   │   ├── benchmark/   # 基准测试
-│   │   ├── stress-test/ # 压力测试
-│   │   └── monitoring/  # 监控示例
-│   ├── integration/     # 集成示例
-│   │   ├── spring-boot/ # Spring Boot集成
-│   │   ├── gin/         # Gin框架集成
-│   │   └── microservice/# 微服务架构
-│   └── tools/           # 工具示例
-│       ├── admin/       # 管理工具
-│       ├── migration/   # 数据迁移
-│       └── monitoring/  # 监控工具
-├── tools/                # 工具集
-│   └── monitor/          # 系统监控工具
-├── scripts/              # 脚本文件
-│   ├── test_system.sh    # 系统测试脚本
-│   └── full_test.sh      # 完整测试脚本
-├── config/               # 配置文件
-│   └── config.yaml       # 系统配置
-├── build/                # 构建输出目录
-│   └── bin/              # 可执行文件
-├── logs/                 # 日志目录
-├── docs/                 # 文档目录
-│   ├── ARCHITECTURE.md   # 架构文档
-│   └── QUICKSTART.md     # 快速开始指南
-├── Makefile              # 构建脚本
-├── go.mod                # Go模块文件
-├── go.sum                # Go依赖校验
-└── LICENSE               # 许可证文件
+├── cmd/                    # Main program entry
+│   ├── nameserver/        # NameServer service
+│   └── broker/            # Broker service
+├── pkg/                   # Core packages
+│   ├── client/           # Client library (independent module)
+│   ├── common/           # Common data structures
+│   ├── nameserver/       # NameServer implementation
+│   ├── broker/           # Broker implementation
+│   ├── protocol/         # Communication protocol
+│   ├── store/            # Storage engine
+│   ├── cluster/          # Cluster management
+│   ├── failover/         # Failover
+│   └── ha/               # High availability
+├── examples/             # Example programs
+│   ├── README.md         # Example documentation
+│   ├── basic/           # Basic examples
+│   │   ├── producer/    # Producer basic examples
+│   │   ├── consumer/    # Consumer basic examples
+│   │   └── simple-demo/ # Simple demo
+│   ├── advanced/        # Advanced feature examples
+│   │   ├── transaction/ # Transactional messages
+│   │   ├── ordered/     # Ordered messages
+│   │   ├── delayed/     # Delayed messages
+│   │   ├── batch/       # Batch messages
+│   │   └── filter/      # Message filtering
+│   ├── cluster/         # Cluster mode examples
+│   │   ├── multi-broker/# Multi-Broker cluster
+│   │   ├── ha/          # High availability configuration
+│   │   └── load-balance/# Load balancing
+│   ├── performance/     # Performance testing
+│   │   ├── benchmark/   # Benchmark testing
+│   │   ├── stress-test/ # Stress testing
+│   │   └── monitoring/  # Monitoring examples
+│   ├── integration/     # Integration examples
+│   │   ├── spring-boot/ # Spring Boot integration
+│   │   ├── gin/         # Gin framework integration
+│   │   └── microservice/# Microservice architecture
+│   └── tools/           # Tool examples
+│       ├── admin/       # Admin tools
+│       ├── migration/   # Data migration
+│       └── monitoring/  # Monitoring tools
+├── tools/                # Toolset
+│   └── monitor/          # System monitoring tools
+├── scripts/              # Script files
+│   ├── test_system.sh    # System test script
+│   └── full_test.sh      # Full test script
+├── config/               # Configuration files
+│   └── config.yaml       # System configuration
+├── build/                # Build output directory
+│   └── bin/              # Executable files
+├── logs/                 # Log directory
+├── docs/                 # Documentation directory
+│   ├── ARCHITECTURE.md   # Architecture documentation
+│   ├── QUICKSTART.md     # Quick start guide
+│   ├── CLIENT_USAGE.md   # Client usage guide (Chinese)
+│   └── CLIENT_USAGE_EN.md # Client usage guide (English)
+├── Makefile              # Build script
+├── go.mod                # Go module file
+├── go.sum                # Go dependency verification
+└── LICENSE               # License file
 ```
 
-## 环境要求
+## Environment Requirements
 
-- Go 1.19 或更高版本
+- Go 1.19 or higher
 - Git
-- Make (可选，用于构建脚本)
+- Make (optional, for build scripts)
 
-## 安装和构建
+## Installation and Build
 
-### 1. 克隆项目
+### Use as Third-party Library (Recommended)
+
+If you only need RocketMQ client functionality, you can directly import the independent client library:
+
+```bash
+go get github.com/chenjy16/go-rocketmq-client
+```
+
+Import in your code:
+```go
+import "github.com/chenjy16/go-rocketmq-client"
+```
+
+### Full Project Development
+
+### 1. Clone the project
 ```bash
 git clone https://github.com/your-org/go-rocketmq.git
 cd go-rocketmq
 ```
 
-### 2. 安装依赖
+### 2. Install dependencies
 ```bash
 go mod tidy
 ```
 
-### 3. 构建项目
+### 3. Build the project
 ```bash
 make build
 ```
 
-或者手动构建：
+Or build manually:
 ```bash
-# 构建 NameServer
+# Build NameServer
 go build -o build/bin/nameserver ./cmd/nameserver
 
-# 构建 Broker
+# Build Broker
 go build -o build/bin/broker ./cmd/broker
 
-# 构建示例程序
+# Build example programs
 go build -o build/bin/producer-example ./examples/producer
 go build -o build/bin/consumer-example ./examples/consumer
 ```
 
-## 快速开始
+## Quick Start
 
-### 1. 启动 NameServer
+### 1. Start NameServer
 ```bash
-# 使用 Makefile
+# Using Makefile
 make run-nameserver
 
-# 或直接运行
+# Or run directly
 ./build/bin/nameserver
 ```
 
-NameServer 将在端口 9876 上启动。
+NameServer will start on port 9876.
 
-### 2. 启动 Broker
-在新的终端窗口中：
+### 2. Start Broker
+In a new terminal window:
 ```bash
-# 使用 Makefile
+# Using Makefile
 make run-broker
 
-# 或直接运行
+# Or run directly
 ./build/bin/broker
 ```
 
-Broker 将在端口 10911 上启动，并自动注册到 NameServer。
+Broker will start on port 10911 and automatically register with NameServer.
 
-### 3. 运行生产者示例
-在新的终端窗口中：
+### 3. Run producer example
+In a new terminal window:
 ```bash
-# 使用 Makefile
+# Using Makefile
 make run-producer
 
-# 或直接运行
+# Or run directly
 ./build/bin/producer-example
 ```
 
-### 4. 运行消费者示例
-在新的终端窗口中：
+### 4. Run consumer example
+In a new terminal window:
 ```bash
-# 使用 Makefile
+# Using Makefile
 make run-consumer
 
-# 或直接运行
+# Or run directly
 ./build/bin/consumer-example
 ```
 
-## 基本使用示例
+## Basic Usage Examples
 
-### 发送消息
+### Sending Messages
 
 ```go
 package main
@@ -279,22 +265,22 @@ import (
 )
 
 func main() {
-    // 创建生产者
+    // Create producer
     producer := client.NewProducer(nil)
     producer.SetNameServerAddr("127.0.0.1:9876")
     
-    // 启动生产者
+    // Start producer
     err := producer.Start()
     if err != nil {
         log.Fatalf("Failed to start producer: %v", err)
     }
     defer producer.Stop()
     
-    // 创建消息
+    // Create message
     msg := common.NewMessage("TestTopic", []byte("Hello RocketMQ!"))
     msg.SetTags("test").SetKeys("key1")
     
-    // 发送消息
+    // Send message
     result, err := producer.SendSync(msg)
     if err != nil {
         log.Fatalf("Failed to send message: %v", err)
@@ -304,7 +290,7 @@ func main() {
 }
 ```
 
-### 消费消息
+### Consuming Messages
 
 ```go
 package main
@@ -319,7 +305,7 @@ import (
     "go-rocketmq/pkg/common"
 )
 
-// 消息监听器
+// Message listener
 type MyMessageListener struct{}
 
 func (l *MyMessageListener) ConsumeMessage(msgs []*common.MessageExt) common.ConsumeResult {
@@ -330,39 +316,39 @@ func (l *MyMessageListener) ConsumeMessage(msgs []*common.MessageExt) common.Con
 }
 
 func main() {
-    // 创建消费者
+    // Create consumer
     consumer := client.NewConsumer(nil)
     consumer.SetNameServerAddr("127.0.0.1:9876")
     
-    // 订阅 Topic
+    // Subscribe to Topic
     listener := &MyMessageListener{}
     err := consumer.Subscribe("TestTopic", "*", listener)
     if err != nil {
         log.Fatalf("Failed to subscribe: %v", err)
     }
     
-    // 启动消费者
+    // Start consumer
     err = consumer.Start()
     if err != nil {
         log.Fatalf("Failed to start consumer: %v", err)
     }
     defer consumer.Stop()
     
-    // 等待中断信号
+    // Wait for interrupt signal
     sigChan := make(chan os.Signal, 1)
     signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
     <-sigChan
 }
 ```
 
-## 配置选项
+## Configuration Options
 
-### NameServer 配置
+### NameServer Configuration
 ```bash
 ./build/bin/nameserver -port 9876
 ```
 
-### Broker 配置
+### Broker Configuration
 ```bash
 ./build/bin/broker \
   -port 10911 \
@@ -372,7 +358,7 @@ func main() {
   -store "/tmp/rocketmq-store"
 ```
 
-### 生产者配置
+### Producer Configuration
 ```go
 config := &client.ProducerConfig{
     GroupName:      "ProducerGroup",
@@ -383,7 +369,7 @@ config := &client.ProducerConfig{
 producer := client.NewProducer(config)
 ```
 
-### 消费者配置
+### Consumer Configuration
 ```go
 config := &client.ConsumerConfig{
     GroupName:        "ConsumerGroup",
@@ -396,284 +382,387 @@ config := &client.ConsumerConfig{
 consumer := client.NewConsumer(config)
 ```
 
-## 性能特性
+## Performance Features
 
-### 发送性能
-- **同步发送**: 支持高可靠性消息发送
-- **异步发送**: 支持高吞吐量消息发送
-- **单向发送**: 支持最高性能消息发送
+### Sending Performance
+- **Synchronous sending**: Supports high-reliability message sending
+- **Asynchronous sending**: Supports high-throughput message sending
+- **One-way sending**: Supports highest-performance message sending
 
-### 并发支持
-- **多线程生产**: 支持多个生产者并发发送
-- **多线程消费**: 支持多个消费者并发消费
-- **负载均衡**: 自动分配消息队列
+### Concurrency Support
+- **Multi-threaded production**: Supports multiple producers sending concurrently
+- **Multi-threaded consumption**: Supports multiple consumers consuming concurrently
+- **Load balancing**: Automatic message queue allocation
 
-### 监控指标
-- **TPS**: 每秒事务处理数
-- **延迟**: 消息发送延迟
-- **吞吐量**: 数据传输速率
-- **系统资源**: CPU、内存、磁盘使用率
+### Monitoring Metrics
+- **TPS**: Transactions per second
+- **Latency**: Message sending latency
+- **Throughput**: Data transfer rate
+- **System resources**: CPU, memory, disk usage
 
-### 实际性能测试结果
+### Actual Performance Test Results
 
-#### 同步发送模式
-- **小规模测试** (100条消息, 3并发):
-  - 成功率: 100%
+#### Synchronous Sending Mode
+- **Small-scale test** (100 messages, 3 concurrent):
+  - Success rate: 100%
   - TPS: 7,747.59 msg/s
-  - 平均延迟: 0.37 ms
-  - 吞吐量: 7.57 MB/s
+  - Average latency: 0.37 ms
+  - Throughput: 7.57 MB/s
 
-- **中等规模测试** (1000条消息, 10并发):
-  - 成功率: 99.90%
+- **Medium-scale test** (1000 messages, 10 concurrent):
+  - Success rate: 99.90%
   - TPS: 19,366.64 msg/s
-  - 平均延迟: 0.50 ms
-  - 吞吐量: 18.91 MB/s
+  - Average latency: 0.50 ms
+  - Throughput: 18.91 MB/s
 
-#### 异步发送模式
-- **测试结果** (500条消息, 5并发):
-  - 成功率: 87.40%
+#### Asynchronous Sending Mode
+- **Test results** (500 messages, 5 concurrent):
+  - Success rate: 87.40%
   - TPS: 218.34 msg/s
-  - 吞吐量: 0.21 MB/s
+  - Throughput: 0.21 MB/s
 
-## 常用命令
+## Common Commands
 
-### 构建相关
+### Build Related
 ```bash
-make build          # 构建所有组件
-make clean          # 清理构建文件
-make test           # 运行测试
+make build          # Build all components
+make clean          # Clean build files
+make test           # Run tests
 ```
 
-### 运行相关
+### Runtime Related
 ```bash
-make run-nameserver # 运行 NameServer
-make run-broker     # 运行 Broker
-make run-producer   # 运行生产者示例
-make run-consumer   # 运行消费者示例
+make run-nameserver # Run NameServer
+make run-broker     # Run Broker
+make run-producer   # Run producer example
+make run-consumer   # Run consumer example
 ```
 
-### 性能测试
+### Performance Testing
 ```bash
-# 同步发送性能测试
+# Synchronous sending performance test
 make benchmark
 
-# 异步发送性能测试
+# Asynchronous sending performance test
 make benchmark-async
 
-# 单向发送性能测试
+# One-way sending performance test
 make benchmark-oneway
 ```
 
-### 系统监控
+### System Monitoring
 ```bash
-# 命令行监控
+# Command line monitoring
 make monitor
 
-# Web 监控界面
+# Web monitoring interface
 make monitor-web
 ```
 
-### 自动化测试
+### Automated Testing
 ```bash
-# 运行完整系统测试
+# Run full system test
 ./scripts/full_test.sh
 ```
 
-### 开发相关
+### Development Related
 ```bash
-make fmt            # 格式化代码
-make vet            # 代码检查
-make lint           # 运行 linter
+make fmt            # Format code
+make vet            # Code check
+make lint           # Run linter
 ```
 
-## 故障排除
+## Troubleshooting
 
-### 1. 端口冲突
-如果默认端口被占用，可以通过参数指定其他端口：
+### 1. Port Conflicts
+If default ports are occupied, you can specify other ports through parameters:
 ```bash
 ./build/bin/nameserver -port 9877
 ./build/bin/broker -port 10912 -nameserver "127.0.0.1:9877"
 ```
 
-### 2. 连接失败
-确保 NameServer 已启动并且网络连接正常：
+### 2. Connection Failures
+Ensure NameServer is started and network connection is normal:
 ```bash
-# 检查 NameServer 是否运行
+# Check if NameServer is running
 netstat -an | grep 9876
 
-# 检查 Broker 是否运行
+# Check if Broker is running
 netstat -an | grep 10911
 ```
 
-### 3. 消息发送失败
-检查 Topic 是否存在，Broker 是否正常运行。
+### 3. Message Sending Failures
+Check if Topic exists and Broker is running normally.
 
-### 4. 消息消费异常
-确保消费者组名唯一，订阅表达式正确。
+### 4. Message Consumption Exceptions
+Ensure consumer group name is unique and subscription expression is correct.
 
-## 监控和日志
+## Monitoring and Logging
 
-### 查看日志
+### View Logs
 ```bash
-# NameServer 日志
+# NameServer logs
 tail -f /tmp/nameserver.log
 
-# Broker 日志
+# Broker logs
 tail -f /tmp/broker.log
 ```
 
-### 监控指标
-- 消息发送 TPS
-- 消息消费延迟
-- 队列深度
-- 系统资源使用率
+### Monitoring Metrics
+- Message sending TPS
+- Message consumption latency
+- Queue depth
+- System resource usage
 
-## 技术选型
+## Technology Stack
 
-- **语言**: Go 1.19+
-- **网络**: TCP/HTTP
-- **序列化**: JSON/Protocol Buffers
-- **存储**: 文件系统 (计划支持多种存储后端)
-- **日志**: 标准库 log (计划集成 logrus/zap)
-- **构建**: Make
-- **测试**: Go标准测试框架
+- **Language**: Go 1.19+
+- **Network**: TCP/HTTP
+- **Serialization**: JSON/Protocol Buffers
+- **Storage**: File system (planned to support multiple storage backends)
+- **Logging**: Standard library log (planned to integrate logrus/zap)
+- **Build**: Make
+- **Testing**: Go standard testing framework
 
-## 扩展性设计
+## Scalability Design
 
-### 水平扩展
-- NameServer 无状态，支持多实例部署
-- Broker 支持集群模式，可动态扩容
-- 客户端支持自动发现和负载均衡
-- 支持多个 Producer/Consumer 实例
+### Horizontal Scaling
+- NameServer is stateless, supports multi-instance deployment
+- Broker supports cluster mode, can be dynamically scaled
+- Clients support automatic discovery and load balancing
+- Supports multiple Producer/Consumer instances
 
-### 插件化架构
-- 可插拔的存储引擎
-- 可扩展的序列化协议
-- 可定制的负载均衡策略
-- 存储引擎可插拔
-- 序列化方式可配置
-- 过滤器支持自定义
+### Plugin Architecture
+- Pluggable storage engines
+- Extensible serialization protocols
+- Customizable load balancing strategies
+- Pluggable storage engines
+- Configurable serialization methods
+- Custom filter support
 
+## Core Processes
 
+### 1. System Startup Process
+1. Start NameServer
+2. Start Broker, register with NameServer
+3. Broker periodically sends heartbeats to NameServer
+4. NameServer maintains Broker health status
 
-## 核心流程
+### 2. Message Sending Process
+1. Producer gets Topic routing information from NameServer
+2. Select appropriate Broker and queue
+3. Send message to Broker
+4. Broker stores message and returns result
 
-### 1. 系统启动流程
-1. 启动 NameServer
-2. 启动 Broker，向 NameServer 注册
-3. Broker 定期向 NameServer 发送心跳
-4. NameServer 维护 Broker 存活状态
+### 3. Message Consumption Process
+1. Consumer subscribes to Topic
+2. Get routing information from NameServer
+3. Send pull request to Broker
+4. Process returned messages
+5. Commit consumption progress
 
-### 2. 消息发送流程
-1. Producer 从 NameServer 获取 Topic 路由信息
-2. 选择合适的 Broker 和队列
-3. 发送消息到 Broker
-4. Broker 存储消息并返回结果
+## Development Plan
 
-### 3. 消息消费流程
-1. Consumer 订阅 Topic
-2. 从 NameServer 获取路由信息
-3. 向 Broker 发送拉取请求
-4. 处理返回的消息
-5. 提交消费进度
+### Short-term Goals
+- [ ] Improve message persistence mechanism
+- [ ] Implement cluster mode support
+- [ ] Add message filtering functionality
+- [ ] Optimize performance and stability
 
-## 开发计划
+### Long-term Goals
+- [ ] Support transactional messages
+- [ ] Implement delayed messages
+- [ ] Add message tracing functionality
+- [ ] Support multiple storage engines
+- [ ] Complete network communication protocol
+- [ ] Consumption retry mechanism
+- [ ] Dead letter queue
+- [ ] Monitoring and management tools
 
-### 短期目标
-- [ ] 完善消息持久化机制
-- [ ] 实现集群模式支持
-- [ ] 添加消息过滤功能
-- [ ] 优化性能和稳定性
+## Deployment Methods
 
-### 长期目标
-- [ ] 支持事务消息
-- [ ] 实现延时消息
-- [ ] 添加消息轨迹功能
-- [ ] 支持多种存储引擎
-- [ ] 完整的网络通信协议
-- [ ] 消费重试机制
-- [ ] 死信队列
-- [ ] 监控和管理工具
-
-## 部署方式
-
-### 开发环境
+### Development Environment
 ```bash
-# 启动 NameServer
+# Start NameServer
 make run-nameserver
 
-# 启动 Broker
+# Start Broker
 make run-broker
 
-# 运行生产者示例
+# Run producer example
 make run-producer
 
-# 运行消费者示例
+# Run consumer example
 make run-consumer
 ```
 
-### 生产环境
-- 支持 Docker 容器化部署
-- 支持 Kubernetes 集群部署
-- 支持传统虚拟机部署
+### Production Environment
+- Support Docker containerized deployment
+- Support Kubernetes cluster deployment
+- Support traditional virtual machine deployment
 
-## 示例代码
+## Example Code
 
-本项目提供了丰富的示例代码，位于 `examples/` 目录：
+This project provides rich example code located in the `examples/` directory to help developers quickly get started and understand the project's features.
 
-- **基础示例**: 生产者和消费者的基本使用
-- **高级特性**: 事务消息、顺序消息、延时消息等
-- **集群模式**: 多Broker集群、高可用配置
-- **性能测试**: 基准测试和压力测试工具
-- **集成示例**: 与各种框架的集成方案
-- **工具示例**: 管理工具和监控工具
+### Example Directory Structure
 
-详细说明请参考 [examples/README.md](examples/README.md)。
+```
+examples/
+├── README.md                    # Example documentation
+├── basic/                       # Basic examples
+│   ├── producer/               # Producer basic examples
+│   ├── consumer/               # Consumer basic examples
+│   └── simple-demo/            # Simple demo
+├── advanced/                   # Advanced feature examples
+│   ├── transaction/            # Transactional messages
+│   ├── ordered/                # Ordered messages
+│   ├── delayed/                # Delayed messages
+│   ├── batch/                  # Batch messages
+│   └── filter/                 # Message filtering
+├── cluster/                    # Cluster mode examples
+│   ├── multi-broker/           # Multi-Broker cluster
+│   ├── ha/                     # High availability configuration
+│   └── load-balance/           # Load balancing
+├── performance/                # Performance testing
+│   ├── benchmark/              # Benchmark testing
+│   ├── stress-test/            # Stress testing
+│   └── monitoring/             # Monitoring examples
+├── integration/                # Integration examples
+│   ├── spring-boot/            # Spring Boot integration
+│   ├── gin/                    # Gin framework integration
+│   └── microservice/           # Microservice architecture
+└── tools/                      # Tool examples
+    ├── admin/                  # Admin tools
+    ├── migration/              # Data migration
+    └── monitoring/             # Monitoring tools
+```
 
-## 获取帮助
+### Quick Start with Examples
 
-- 查看 [架构设计文档](ARCHITECTURE.md)
-- 阅读 [快速开始指南](QUICKSTART.md)
-- 查看 [项目总结](PROJECT_SUMMARY.md)
-- 提交 [Issue](https://github.com/your-org/go-rocketmq/issues)
-- 参与 [讨论](https://github.com/your-org/go-rocketmq/discussions)
+#### 1. Start Services
 
-## 贡献指南
+First start NameServer and Broker:
 
-我们欢迎所有形式的贡献，包括但不限于：
+```bash
+# Start NameServer
+go run cmd/nameserver/main.go
 
-1. **代码贡献**
-   - Fork 项目
-   - 创建特性分支
-   - 提交更改
-   - 推送到分支
-   - 创建 Pull Request
+# Start Broker
+go run cmd/broker/main.go
+```
 
-2. **文档改进**
-   - 完善现有文档
-   - 添加使用示例
-   - 翻译文档
+#### 2. Run Basic Examples
 
-3. **问题反馈**
-   - 报告 Bug
-   - 提出功能建议
-   - 性能优化建议
+```bash
+# Run producer example
+go run examples/basic/producer/main.go
 
-4. **测试贡献**
-   - 编写单元测试
-   - 进行集成测试
-   - 性能测试
+# Run consumer example
+go run examples/basic/consumer/main.go
+```
 
-请确保：
-- 代码简洁易懂
-- 包含必要的注释
-- 提供运行说明
-- 遵循项目的代码规范
+#### 3. Run Complete Demo
 
-## 许可证
+```bash
+# Run simple demo
+go run examples/basic/simple-demo/main.go
+```
 
-本项目采用 Apache License 2.0 许可证。详见 [LICENSE](LICENSE) 文件。
+### Example Categories
+
+#### Basic Examples (basic/)
+- **producer/**: Shows how to create producers and send messages
+- **consumer/**: Shows how to create consumers and receive messages
+- **simple-demo/**: Complete producer-consumer demonstration
+
+#### Advanced Features (advanced/)
+- **transaction/**: Transactional message sending and processing
+- **ordered/**: Ordered message sending and consumption
+- **delayed/**: Delayed message usage
+- **batch/**: Batch message processing
+- **filter/**: Message filtering functionality
+
+#### Cluster Mode (cluster/)
+- **multi-broker/**: Multi-Broker cluster deployment
+- **ha/**: High availability configuration and failover
+- **load-balance/**: Load balancing strategies
+
+#### Performance Testing (performance/)
+- **benchmark/**: Performance benchmark testing
+- **stress-test/**: Stress testing tools
+- **monitoring/**: Performance monitoring examples
+
+#### Integration Examples (integration/)
+- **spring-boot/**: Integration with Spring Boot
+- **gin/**: Integration with Gin framework
+- **microservice/**: Usage in microservice architecture
+
+#### Tool Examples (tools/)
+- **admin/**: Admin tool usage
+- **migration/**: Data migration tools
+- **monitoring/**: Monitoring tool configuration
+
+### Example Requirements
+
+- Go 1.19+
+- Running NameServer (default port: 9876)
+- Running Broker (default port: 10911)
+
+### Configuration Notes
+
+Most examples use default configuration. For custom configuration, please refer to the `config/config.yaml` file.
+
+### Common Issues
+
+1. **Connection failures**: Ensure NameServer and Broker are properly started
+2. **Message sending failures**: Check if Topic has been created
+3. **Consumer cannot receive messages**: Confirm subscribed Topic and Tags are correct
+
+## Getting Help
+
+- View [Architecture Design Documentation](ARCHITECTURE.md)
+- Read [Quick Start Guide](QUICKSTART.md)
+- View [Project Summary](PROJECT_SUMMARY.md)
+- Submit [Issues](https://github.com/your-org/go-rocketmq/issues)
+- Participate in [Discussions](https://github.com/your-org/go-rocketmq/discussions)
+
+## Contributing Guidelines
+
+We welcome all forms of contributions, including but not limited to:
+
+1. **Code Contributions**
+   - Fork the project
+   - Create feature branch
+   - Commit changes
+   - Push to branch
+   - Create Pull Request
+
+2. **Documentation Improvements**
+   - Improve existing documentation
+   - Add usage examples
+   - Translate documentation
+
+3. **Issue Feedback**
+   - Report bugs
+   - Suggest features
+   - Performance optimization suggestions
+
+4. **Testing Contributions**
+   - Write unit tests
+   - Conduct integration testing
+   - Performance testing
+
+Please ensure:
+- Code is clean and understandable
+- Include necessary comments
+- Provide running instructions
+- Follow project coding standards
+
+## License
+
+This project is licensed under the Apache License 2.0. See the [LICENSE](LICENSE) file for details.
 
 ---
 
-**Go-RocketMQ** - 用 Go 语言构建的高性能分布式消息队列系统
+**Go-RocketMQ** - High-performance distributed message queue system built with Go language

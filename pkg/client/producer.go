@@ -8,9 +8,6 @@ import (
 	"net"
 	"sync"
 	"time"
-
-	"go-rocketmq/pkg/common"
-	"go-rocketmq/pkg/protocol"
 )
 
 // Producer 消息生产者
@@ -20,7 +17,7 @@ type Producer struct {
 	started      bool
 	shutdown     chan struct{}
 	mutex        sync.RWMutex
-	routeTable   map[string]*protocol.TopicRouteData
+	routeTable   map[string]*TopicRouteData
 	routeMutex   sync.RWMutex
 }
 
@@ -51,7 +48,7 @@ func NewProducer(groupName string) *Producer {
 	return &Producer{
 		config:      config,
 		shutdown:    make(chan struct{}),
-		routeTable:  make(map[string]*protocol.TopicRouteData),
+		routeTable:  make(map[string]*TopicRouteData),
 	}
 }
 
@@ -95,12 +92,12 @@ func (p *Producer) Shutdown() {
 }
 
 // SendSync 同步发送消息
-func (p *Producer) SendSync(msg *common.Message) (*common.SendResult, error) {
+func (p *Producer) SendSync(msg *Message) (*SendResult, error) {
 	return p.SendSyncWithTimeout(msg, p.config.SendMsgTimeout)
 }
 
 // SendSyncWithTimeout 带超时的同步发送消息
-func (p *Producer) SendSyncWithTimeout(msg *common.Message, timeout time.Duration) (*common.SendResult, error) {
+func (p *Producer) SendSyncWithTimeout(msg *Message, timeout time.Duration) (*SendResult, error) {
 	if !p.started {
 		return nil, fmt.Errorf("producer not started")
 	}
@@ -138,7 +135,7 @@ func (p *Producer) SendSyncWithTimeout(msg *common.Message, timeout time.Duratio
 }
 
 // SendAsync 异步发送消息
-func (p *Producer) SendAsync(msg *common.Message, callback func(*common.SendResult, error)) error {
+func (p *Producer) SendAsync(msg *Message, callback func(*SendResult, error)) error {
 	if !p.started {
 		return fmt.Errorf("producer not started")
 	}
@@ -156,7 +153,7 @@ func (p *Producer) SendAsync(msg *common.Message, callback func(*common.SendResu
 }
 
 // SendOneway 单向发送消息（不关心结果）
-func (p *Producer) SendOneway(msg *common.Message) error {
+func (p *Producer) SendOneway(msg *Message) error {
 	if !p.started {
 		return fmt.Errorf("producer not started")
 	}
@@ -167,14 +164,14 @@ func (p *Producer) SendOneway(msg *common.Message) error {
 }
 
 // getTopicRouteData 获取Topic路由数据
-func (p *Producer) getTopicRouteData(topic string) *protocol.TopicRouteData {
+func (p *Producer) getTopicRouteData(topic string) *TopicRouteData {
 	p.routeMutex.RLock()
 	defer p.routeMutex.RUnlock()
 	return p.routeTable[topic]
 }
 
 // selectMessageQueue 选择消息队列
-func (p *Producer) selectMessageQueue(routeData *protocol.TopicRouteData, topic string) *common.MessageQueue {
+func (p *Producer) selectMessageQueue(routeData *TopicRouteData, topic string) *MessageQueue {
 	if len(routeData.QueueDatas) == 0 {
 		return nil
 	}
@@ -182,7 +179,7 @@ func (p *Producer) selectMessageQueue(routeData *protocol.TopicRouteData, topic 
 	// 简单的轮询选择策略
 	queueData := routeData.QueueDatas[0]
 	
-	return &common.MessageQueue{
+	return &MessageQueue{
 		Topic:      topic,
 		BrokerName: queueData.BrokerName,
 		QueueId:    0,  // 简化选择第一个队列
@@ -190,7 +187,7 @@ func (p *Producer) selectMessageQueue(routeData *protocol.TopicRouteData, topic 
 }
 
 // sendMessageToQueue 发送消息到指定队列
-func (p *Producer) sendMessageToQueue(msg *common.Message, mq *common.MessageQueue, timeout time.Duration) (*common.SendResult, error) {
+func (p *Producer) sendMessageToQueue(msg *Message, mq *MessageQueue, timeout time.Duration) (*SendResult, error) {
 	// 1. 根据MessageQueue找到Broker地址
 	routeData := p.getTopicRouteData(mq.Topic)
 	if routeData == nil {
@@ -231,7 +228,7 @@ func (p *Producer) sendMessageToQueue(msg *common.Message, mq *common.MessageQue
 	
 	// 创建完整的请求，包含消息体
 	request := map[string]interface{}{
-		"header": &protocol.SendMessageRequestHeader{
+		"header": &SendMessageRequestHeader{
 			ProducerGroup:   p.config.GroupName,
 			Topic:          msg.Topic,
 			QueueId:        mq.QueueId,
@@ -277,14 +274,14 @@ func (p *Producer) sendMessageToQueue(msg *common.Message, mq *common.MessageQue
 	}
 	
 	// 6. 解析响应
-	var response protocol.SendMessageResponseHeader
+	var response SendMessageResponseHeader
 	if err := json.Unmarshal(responseData, &response); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %v", err)
 	}
 	
 	// 7. 构造发送结果
-	result := &common.SendResult{
-		SendStatus:   common.SendOK,
+	result := &SendResult{
+		SendStatus:   SendOK,
 		MsgId:        response.MsgId,
 		MessageQueue: mq,
 		QueueOffset:  response.QueueOffset,
@@ -319,17 +316,17 @@ func (p *Producer) updateRouteInfo() {
 	defer p.routeMutex.Unlock()
 	
 	// 为TestTopic创建路由数据
-	testTopicRoute := &protocol.TopicRouteData{
-		QueueDatas: []*protocol.QueueData{
+	testTopicRoute := &TopicRouteData{
+		QueueDatas: []*QueueData{
 			{
 				BrokerName:     "DefaultBroker",
 				ReadQueueNums:  4,
 				WriteQueueNums: 4,
 				Perm:          6, // 读写权限
-				TopicSysFlag:   0,
+
 			},
 		},
-		BrokerDatas: []*protocol.BrokerData{
+		BrokerDatas: []*BrokerData{
 			{
 				Cluster:    "DefaultCluster",
 				BrokerName: "DefaultBroker",
@@ -341,17 +338,17 @@ func (p *Producer) updateRouteInfo() {
 	}
 	
 	// 为OrderTopic创建路由数据
-	orderTopicRoute := &protocol.TopicRouteData{
-		QueueDatas: []*protocol.QueueData{
+	orderTopicRoute := &TopicRouteData{
+		QueueDatas: []*QueueData{
 			{
 				BrokerName:     "DefaultBroker",
 				ReadQueueNums:  4,
 				WriteQueueNums: 4,
 				Perm:          6, // 读写权限
-				TopicSysFlag:   0,
+
 			},
 		},
-		BrokerDatas: []*protocol.BrokerData{
+		BrokerDatas: []*BrokerData{
 			{
 				Cluster:    "DefaultCluster",
 				BrokerName: "DefaultBroker",
@@ -366,17 +363,17 @@ func (p *Producer) updateRouteInfo() {
 	p.routeTable["OrderTopic"] = orderTopicRoute
 	
 	// 为BenchmarkTopic创建路由数据
-	benchmarkTopicRoute := &protocol.TopicRouteData{
-		QueueDatas: []*protocol.QueueData{
+	benchmarkTopicRoute := &TopicRouteData{
+		QueueDatas: []*QueueData{
 			{
 				BrokerName:     "DefaultBroker",
 				ReadQueueNums:  4,
 				WriteQueueNums: 4,
 				Perm:          6, // 读写权限
-				TopicSysFlag:   0,
+
 			},
 		},
-		BrokerDatas: []*protocol.BrokerData{
+		BrokerDatas: []*BrokerData{
 			{
 				Cluster:    "DefaultCluster",
 				BrokerName: "DefaultBroker",

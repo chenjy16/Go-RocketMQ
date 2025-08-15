@@ -31,7 +31,7 @@ $(BIN_DIR):
 	mkdir -p $(BIN_DIR)
 
 # 构建所有组件
-build: build-nameserver build-broker build-examples build-benchmark build-tools
+build: build-nameserver build-broker build-examples build-benchmark build-tools build-client
 	@echo "所有组件构建完成"
 
 # 构建 NameServer
@@ -44,8 +44,19 @@ build-broker: $(BIN_DIR)
 
 # 构建示例程序
 build-examples:
-	$(GOBUILD) -o $(PRODUCER_EXAMPLE) ./examples/producer
-	$(GOBUILD) -o $(CONSUMER_EXAMPLE) ./examples/consumer
+	$(GOBUILD) -o $(PRODUCER_EXAMPLE) ./examples/basic/producer
+	$(GOBUILD) -o $(CONSUMER_EXAMPLE) ./examples/basic/consumer
+
+# 构建客户端库
+build-client:
+	@echo "构建客户端库..."
+	cd pkg/client && go build ./...
+	@echo "客户端库构建完成"
+
+# 测试客户端库
+test-client:
+	@echo "测试客户端库..."
+	cd pkg/client && go test -v ./...
 
 # 构建性能测试工具
 build-benchmark:
@@ -141,6 +152,8 @@ help:
 	@echo "  build-nameserver - Build NameServer"
 	@echo "  build-broker    - Build Broker"
 	@echo "  build-examples  - Build example programs"
+	@echo "  build-client    - Build client library"
+	@echo "  test-client     - Test client library"
 	@echo "  clean           - Clean build files"
 	@echo "  test            - Run tests"
 	@echo "  run-nameserver  - Run NameServer"

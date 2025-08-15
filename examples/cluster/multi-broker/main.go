@@ -6,8 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"go-rocketmq/pkg/client"
-	"go-rocketmq/pkg/common"
+	"github.com/chenjy16/go-rocketmq-client"
 )
 
 // 集群配置
@@ -99,7 +98,7 @@ func startClusterProducer(config *ClusterConfig, producerIndex int) {
 	for round := 0; round < 3; round++ {
 		for topicIndex, topic := range topics {
 			// 发送消息
-			msg := common.NewMessage(
+			msg := client.NewMessage(
 				topic,
 				[]byte(fmt.Sprintf("集群消息 - Producer: %d, Topic: %s, Round: %d, Time: %s",
 					producerIndex, topic, round+1, time.Now().Format("15:04:05"))),
@@ -132,8 +131,8 @@ func startClusterConsumer(config *ClusterConfig, consumerIndex int) {
 	consumerConfig := &client.ConsumerConfig{
 		GroupName:        consumerGroup,
 		NameServerAddr:   config.NameServers[0], // 使用第一个NameServer
-		ConsumeFromWhere: common.ConsumeFromLastOffset,
-		MessageModel:     common.Clustering, // 集群模式
+		ConsumeFromWhere: client.ConsumeFromLastOffset,
+		MessageModel:     client.Clustering, // 集群模式
 		ConsumeThreadMin: 2,
 		ConsumeThreadMax: 4,
 		PullInterval:     100 * time.Millisecond,
@@ -179,7 +178,7 @@ type ClusterMessageListener struct {
 	mutex         sync.Mutex
 }
 
-func (l *ClusterMessageListener) ConsumeMessage(msgs []*common.MessageExt) common.ConsumeResult {
+func (l *ClusterMessageListener) ConsumeMessage(msgs []*client.MessageExt) client.ConsumeResult {
 	l.mutex.Lock()
 	defer l.mutex.Unlock()
 
@@ -211,11 +210,11 @@ func (l *ClusterMessageListener) ConsumeMessage(msgs []*common.MessageExt) commo
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	return common.ConsumeSuccess
+	return client.ConsumeSuccess
 }
 
 // 处理集群消息
-func (l *ClusterMessageListener) processClusterMessage(msg *common.MessageExt) {
+func (l *ClusterMessageListener) processClusterMessage(msg *client.MessageExt) {
 	producerId := msg.GetProperty("producerId")
 	round := msg.GetProperty("round")
 	topicIndex := msg.GetProperty("topicIndex")

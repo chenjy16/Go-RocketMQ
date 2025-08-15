@@ -5,8 +5,6 @@ import (
 	"log"
 	"sync"
 	"time"
-
-	"go-rocketmq/pkg/common"
 )
 
 // Consumer 消费者客户端
@@ -14,7 +12,7 @@ type Consumer struct {
 	config          *ConsumerConfig
 	nameServerAddrs []string
 	subscriptions   map[string]*Subscription
-	messageListener common.MessageListener
+	messageListener MessageListener
 	mutex           sync.RWMutex
 	started         bool
 	shutdown        chan struct{}
@@ -25,8 +23,8 @@ type Consumer struct {
 type ConsumerConfig struct {
 	GroupName            string                      // 消费者组名
 	NameServerAddr       string                      // NameServer地址
-	ConsumeFromWhere     common.ConsumeFromWhere     // 消费起始位置
-	MessageModel         common.MessageModel         // 消息模式
+	ConsumeFromWhere     ConsumeFromWhere     // 消费起始位置
+	MessageModel         MessageModel         // 消息模式
 	ConsumeThreadMin     int                         // 最小消费线程数
 	ConsumeThreadMax     int                         // 最大消费线程数
 	PullInterval         time.Duration               // 拉取间隔
@@ -38,7 +36,7 @@ type ConsumerConfig struct {
 type Subscription struct {
 	Topic      string
 	SubExpression string
-	Listener   common.MessageListener
+	Listener   MessageListener
 }
 
 // NewConsumer 创建新的消费者
@@ -59,8 +57,8 @@ func DefaultConsumerConfig() *ConsumerConfig {
 	return &ConsumerConfig{
 		GroupName:        "DefaultConsumerGroup",
 		NameServerAddr:   "127.0.0.1:9876",
-		ConsumeFromWhere: common.ConsumeFromFirstOffset,
-		MessageModel:     common.Clustering,
+		ConsumeFromWhere: ConsumeFromFirstOffset,
+		MessageModel:     Clustering,
 		ConsumeThreadMin: 1,
 		ConsumeThreadMax: 20,
 		PullInterval:     1 * time.Second,
@@ -75,7 +73,7 @@ func (c *Consumer) SetNameServerAddr(addr string) {
 }
 
 // Subscribe 订阅Topic
-func (c *Consumer) Subscribe(topic, subExpression string, listener common.MessageListener) error {
+func (c *Consumer) Subscribe(topic, subExpression string, listener MessageListener) error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	
@@ -202,11 +200,11 @@ func (c *Consumer) pullMessagesForTopic(topic string, subscription *Subscription
 }
 
 // mockPullMessages 模拟拉取消息（用于测试）
-func (c *Consumer) mockPullMessages(topic string) []*common.MessageExt {
+func (c *Consumer) mockPullMessages(topic string) []*MessageExt {
 	// 这是一个模拟实现，实际应该从Broker拉取
-	return []*common.MessageExt{
+	return []*MessageExt{
 		{
-			Message: &common.Message{
+			Message: &Message{
 				Topic: topic,
 				Body:  []byte("mock message body"),
 			},
@@ -218,7 +216,7 @@ func (c *Consumer) mockPullMessages(topic string) []*common.MessageExt {
 }
 
 // consumeMessages 消费消息
-func (c *Consumer) consumeMessages(messages []*common.MessageExt, listener common.MessageListener) {
+func (c *Consumer) consumeMessages(messages []*MessageExt, listener MessageListener) {
 	if listener == nil {
 		log.Printf("No listener found for messages, skipping %d messages", len(messages))
 		return
@@ -228,10 +226,10 @@ func (c *Consumer) consumeMessages(messages []*common.MessageExt, listener commo
 	result := listener.ConsumeMessage(messages)
 	
 	switch result {
-	case common.ConsumeSuccess:
+	case ConsumeSuccess:
 		log.Printf("Successfully consumed %d messages", len(messages))
 		// TODO: 提交消费进度到Broker
-	case common.ReconsumeLater:
+	case ReconsumeLater:
 		log.Printf("Failed to consume %d messages, will retry later", len(messages))
 		// TODO: 将消息重新放回队列或延迟重试
 	}

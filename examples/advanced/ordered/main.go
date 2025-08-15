@@ -6,8 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"go-rocketmq/pkg/client"
-	"go-rocketmq/pkg/common"
+	"github.com/chenjy16/go-rocketmq-client"
 )
 
 // 订单状态变更事件
@@ -149,7 +148,7 @@ func sendOrderLifecycleEvents(producer *client.Producer, orderId string) {
 }
 
 // 创建订单事件消息
-func createOrderEventMessage(event OrderEvent) *common.Message {
+func createOrderEventMessage(event OrderEvent) *client.Message {
 	// 构造消息体
 	msgBody := fmt.Sprintf(`{
 		"orderId": "%s",
@@ -159,7 +158,7 @@ func createOrderEventMessage(event OrderEvent) *common.Message {
 	}`, event.OrderId, event.EventType, event.Timestamp.Format("2006-01-02 15:04:05"), formatData(event.Data))
 
 	// 创建消息
-	msg := common.NewMessage(
+	msg := client.NewMessage(
 		"OrderEventTopic",
 		[]byte(msgBody),
 	).SetTags(event.EventType).SetKeys(event.OrderId).SetProperty("orderId", event.OrderId).SetProperty("eventType", event.EventType).SetProperty("sequence", "true") // 标记为顺序消息
@@ -183,7 +182,7 @@ func formatData(data map[string]interface{}) string {
 }
 
 // 发送顺序消息（根据订单ID选择队列）
-func sendOrderedMessage(producer *client.Producer, msg *common.Message, orderId string) (*common.SendResult, error) {
+func sendOrderedMessage(producer *client.Producer, msg *client.Message, orderId string) (*client.SendResult, error) {
 	// 这里简化处理，实际应该实现队列选择器
 	// 确保同一个订单的消息发送到同一个队列
 	fmt.Printf("[生产者] 发送顺序消息到指定队列 - OrderId: %s\n", orderId)
@@ -200,8 +199,8 @@ func startOrderedConsumer() {
 	config := &client.ConsumerConfig{
 		GroupName:        "ordered_consumer_group",
 		NameServerAddr:   "127.0.0.1:9876",
-		ConsumeFromWhere: common.ConsumeFromLastOffset,
-		MessageModel:     common.Clustering,
+		ConsumeFromWhere: client.ConsumeFromLastOffset,
+		MessageModel:     client.Clustering,
 		ConsumeThreadMin: 1, // 顺序消费使用单线程
 		ConsumeThreadMax: 1, // 顺序消费使用单线程
 		PullInterval:     100 * time.Millisecond,
@@ -238,7 +237,7 @@ type OrderedMessageListener struct {
 	mutex       sync.Mutex
 }
 
-func (l *OrderedMessageListener) ConsumeMessage(msgs []*common.MessageExt) common.ConsumeResult {
+func (l *OrderedMessageListener) ConsumeMessage(msgs []*client.MessageExt) client.ConsumeResult {
 	if l.orderStates == nil {
 		l.orderStates = make(map[string][]string)
 	}
@@ -276,7 +275,7 @@ func (l *OrderedMessageListener) ConsumeMessage(msgs []*common.MessageExt) commo
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	return common.ConsumeSuccess
+	return client.ConsumeSuccess
 }
 
 // 验证事件顺序
@@ -309,7 +308,7 @@ func getExpectedEvent(expectedOrder []string, index int) string {
 }
 
 // 处理订单事件
-func (l *OrderedMessageListener) processOrderEvent(orderId, eventType string, msg *common.MessageExt) {
+func (l *OrderedMessageListener) processOrderEvent(orderId, eventType string, msg *client.MessageExt) {
 	switch eventType {
 	case "ORDER_CREATED":
 		fmt.Printf("  [业务处理] 处理订单创建事件 - OrderId: %s\n", orderId)

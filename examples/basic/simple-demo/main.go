@@ -6,8 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"go-rocketmq/pkg/client"
-	"go-rocketmq/pkg/common"
+	"github.com/chenjy16/go-rocketmq-client"
 )
 
 func main() {
@@ -65,7 +64,7 @@ func sendDemoMessages(producer *client.Producer) {
 	// 1. 发送普通消息
 	fmt.Println("\n[生产者] 发送普通消息...")
 	for i := 0; i < 3; i++ {
-		msg := common.NewMessage(
+		msg := client.NewMessage(
 			"DemoTopic",
 			[]byte(fmt.Sprintf("普通消息 #%d: Hello Go-RocketMQ! Time: %s",
 				i+1, time.Now().Format("15:04:05"))),
@@ -85,7 +84,7 @@ func sendDemoMessages(producer *client.Producer) {
 	fmt.Println("\n[生产者] 发送带标签的消息...")
 	tags := []string{"ORDER", "PAYMENT", "NOTIFICATION"}
 	for i, tag := range tags {
-		msg := common.NewMessage(
+		msg := client.NewMessage(
 			"DemoTopic",
 			[]byte(fmt.Sprintf("业务消息 #%d: %s处理 - %s",
 				i+1, tag, time.Now().Format("15:04:05"))),
@@ -104,7 +103,7 @@ func sendDemoMessages(producer *client.Producer) {
 	// 3. 发送带属性的消息
 	fmt.Println("\n[生产者] 发送带属性的消息...")
 	for i := 0; i < 2; i++ {
-		msg := common.NewMessage(
+		msg := client.NewMessage(
 			"DemoTopic",
 			[]byte(fmt.Sprintf("用户订单消息 #%d - %s",
 				i+1, time.Now().Format("15:04:05"))),
@@ -124,13 +123,13 @@ func sendDemoMessages(producer *client.Producer) {
 	// 4. 发送异步消息
 	fmt.Println("\n[生产者] 发送异步消息...")
 	for i := 0; i < 2; i++ {
-		msg := common.NewMessage(
+		msg := client.NewMessage(
 			"DemoTopic",
 			[]byte(fmt.Sprintf("异步消息 #%d - %s",
 				i+1, time.Now().Format("15:04:05"))),
 		)
 
-		err := producer.SendAsync(msg, func(result *common.SendResult, err error) {
+		err := producer.SendAsync(msg, func(result *client.SendResult, err error) {
 			if err != nil {
 				log.Printf("[生产者] 异步消息发送失败: %v", err)
 				return
@@ -157,8 +156,8 @@ func startConsumer() {
 	config := &client.ConsumerConfig{
 		GroupName:        "demo_consumer_group",
 		NameServerAddr:   "127.0.0.1:9876",
-		ConsumeFromWhere: common.ConsumeFromLastOffset,
-		MessageModel:     common.Clustering,
+		ConsumeFromWhere: client.ConsumeFromLastOffset,
+		MessageModel:     client.Clustering,
 		ConsumeThreadMin: 3,
 		ConsumeThreadMax: 5,
 		PullInterval:     100 * time.Millisecond,
@@ -192,7 +191,7 @@ func startConsumer() {
 // DemoMessageListener 演示消息监听器
 type DemoMessageListener struct{}
 
-func (l *DemoMessageListener) ConsumeMessage(msgs []*common.MessageExt) common.ConsumeResult {
+func (l *DemoMessageListener) ConsumeMessage(msgs []*client.MessageExt) client.ConsumeResult {
 	for _, msg := range msgs {
 		fmt.Printf("\n[消费者] 收到消息:\n")
 		fmt.Printf("  Topic: %s\n", msg.Topic)
@@ -229,5 +228,5 @@ func (l *DemoMessageListener) ConsumeMessage(msgs []*common.MessageExt) common.C
 		fmt.Println("  [消费者] 消息处理完成")
 	}
 
-	return common.ConsumeSuccess
+	return client.ConsumeSuccess
 }

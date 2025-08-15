@@ -8,8 +8,7 @@ import (
 	"syscall"
 	"time"
 
-	"go-rocketmq/pkg/client"
-	"go-rocketmq/pkg/common"
+	"github.com/chenjy16/go-rocketmq-client"
 )
 
 func main() {
@@ -19,8 +18,8 @@ func main() {
 	config := &client.ConsumerConfig{
 		GroupName:        "example_consumer_group",
 		NameServerAddr:   "127.0.0.1:9876",
-		ConsumeFromWhere: common.ConsumeFromLastOffset,
-		MessageModel:     common.Clustering,
+		ConsumeFromWhere: client.ConsumeFromLastOffset,
+		MessageModel:     client.Clustering,
 		ConsumeThreadMin: 5,
 		ConsumeThreadMax: 10,
 		PullInterval:     100 * time.Millisecond,
@@ -88,7 +87,7 @@ func showConsumeStats() {
 // AllMessageListener 处理所有消息的监听器
 type AllMessageListener struct{}
 
-func (l *AllMessageListener) ConsumeMessage(msgs []*common.MessageExt) common.ConsumeResult {
+func (l *AllMessageListener) ConsumeMessage(msgs []*client.MessageExt) client.ConsumeResult {
 	for _, msg := range msgs {
 		allMessageCount++
 		fmt.Printf("[全部消息] 收到消息 - Topic: %s, Tags: %s, Keys: %s, MsgId: %s\n",
@@ -114,13 +113,13 @@ func (l *AllMessageListener) ConsumeMessage(msgs []*common.MessageExt) common.Co
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	return common.ConsumeSuccess
+	return client.ConsumeSuccess
 }
 
 // TagAMessageListener 处理TagA消息的监听器
 type TagAMessageListener struct{}
 
-func (l *TagAMessageListener) ConsumeMessage(msgs []*common.MessageExt) common.ConsumeResult {
+func (l *TagAMessageListener) ConsumeMessage(msgs []*client.MessageExt) client.ConsumeResult {
 	for _, msg := range msgs {
 		tagAMessageCount++
 		fmt.Printf("[TagA消息] 收到特定标签消息 - MsgId: %s\n", msg.MsgId)
@@ -132,11 +131,11 @@ func (l *TagAMessageListener) ConsumeMessage(msgs []*common.MessageExt) common.C
 		processTagAMessage(msg)
 	}
 
-	return common.ConsumeSuccess
+	return client.ConsumeSuccess
 }
 
 // 处理TagA消息的特殊逻辑
-func processTagAMessage(msg *common.MessageExt) {
+func processTagAMessage(msg *client.MessageExt) {
 	// 这里可以添加TagA消息的特殊处理逻辑
 	// 例如：特殊的业务处理、数据库操作等
 	fmt.Printf("[TagA处理] 执行TagA消息的特殊业务逻辑 - MsgId: %s\n", msg.MsgId)

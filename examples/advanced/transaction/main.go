@@ -6,8 +6,7 @@ import (
 	"math/rand"
 	"time"
 
-	"go-rocketmq/pkg/client"
-	"go-rocketmq/pkg/common"
+	"github.com/chenjy16/go-rocketmq-client"
 )
 
 // 模拟业务数据
@@ -63,7 +62,7 @@ func createOrderWithTransaction(producer *client.Producer) {
 			orderId, userId, amount)
 
 		// 创建事务消息
-		msg := common.NewMessage(
+		msg := client.NewMessage(
 			"OrderTopic",
 			[]byte(fmt.Sprintf(`{
 				"orderId": "%s",
@@ -102,7 +101,7 @@ func processPaymentWithTransaction(producer *client.Producer) {
 			orderId, paymentId, amount)
 
 		// 创建支付事务消息
-		msg := common.NewMessage(
+		msg := client.NewMessage(
 			"PaymentTopic",
 			[]byte(fmt.Sprintf(`{
 				"orderId": "%s",
@@ -142,7 +141,7 @@ func deductInventoryWithTransaction(producer *client.Producer) {
 			orderId, product, quantity)
 
 		// 创建库存扣减事务消息
-		msg := common.NewMessage(
+		msg := client.NewMessage(
 			"InventoryTopic",
 			[]byte(fmt.Sprintf(`{
 				"orderId": "%s",
@@ -283,7 +282,7 @@ func (e *InventoryTransactionExecutor) GetTransactionId() string {
 }
 
 // 发送事务消息（简化版本）
-func sendTransactionMessage(producer *client.Producer, msg *common.Message, executor TransactionExecutor) (*common.SendResult, error) {
+func sendTransactionMessage(producer *client.Producer, msg *client.Message, executor TransactionExecutor) (*client.SendResult, error) {
 	fmt.Printf("[事务消息] 开始发送事务消息 - TransactionId: %s\n", executor.GetTransactionId())
 
 	// 第一阶段：发送Half消息

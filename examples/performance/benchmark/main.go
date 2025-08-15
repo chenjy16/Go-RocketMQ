@@ -7,8 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"go-rocketmq/pkg/client"
-	"go-rocketmq/pkg/common"
+	"github.com/chenjy16/go-rocketmq-client"
 )
 
 // 基准测试配置
@@ -230,8 +229,8 @@ func startBenchmarkConsumer(config *BenchmarkConfig, consumerIndex int) {
 	consumerConfig := &client.ConsumerConfig{
 		GroupName:        consumerGroup,
 		NameServerAddr:   config.NameServerAddr,
-		ConsumeFromWhere: common.ConsumeFromLastOffset,
-		MessageModel:     common.Clustering,
+		ConsumeFromWhere: client.ConsumeFromLastOffset,
+		MessageModel:     client.Clustering,
 		ConsumeThreadMin: 4,
 		ConsumeThreadMax: 8,
 		PullInterval:     10 * time.Millisecond,
@@ -267,7 +266,7 @@ func startBenchmarkConsumer(config *BenchmarkConfig, consumerIndex int) {
 }
 
 // 创建基准测试消息
-func createBenchmarkMessage(config *BenchmarkConfig, prefix string, index int) *common.Message {
+func createBenchmarkMessage(config *BenchmarkConfig, prefix string, index int) *client.Message {
 	// 创建指定大小的消息体
 	body := make([]byte, config.MessageSize)
 	msgContent := fmt.Sprintf("%s_msg_%d_%d", prefix, index, time.Now().UnixNano())
@@ -278,7 +277,7 @@ func createBenchmarkMessage(config *BenchmarkConfig, prefix string, index int) *
 		body[i] = byte('A' + (i % 26))
 	}
 
-	msg := common.NewMessage(
+	msg := client.NewMessage(
 		config.Topic,
 		body,
 	).SetTags("BENCHMARK").SetKeys(fmt.Sprintf("%s_%d", prefix, index)).SetProperty("producer", prefix).SetProperty("index", fmt.Sprintf("%d", index)).SetProperty("timestamp", fmt.Sprintf("%d", time.Now().UnixNano()))
@@ -292,7 +291,7 @@ type BenchmarkMessageListener struct {
 	messageCount  int64
 }
 
-func (l *BenchmarkMessageListener) ConsumeMessage(msgs []*common.MessageExt) common.ConsumeResult {
+func (l *BenchmarkMessageListener) ConsumeMessage(msgs []*client.MessageExt) client.ConsumeResult {
 	for _, msg := range msgs {
 		// 更新统计
 		atomic.AddInt64(&globalStats.ReceivedCount, 1)
@@ -308,7 +307,7 @@ func (l *BenchmarkMessageListener) ConsumeMessage(msgs []*common.MessageExt) com
 		// 在实际基准测试中，通常不进行复杂的业务逻辑处理
 	}
 
-	return common.ConsumeSuccess
+	return client.ConsumeSuccess
 }
 
 // 启动性能监控

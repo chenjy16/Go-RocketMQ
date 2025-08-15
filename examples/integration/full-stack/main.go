@@ -7,8 +7,7 @@ import (
 	"time"
 
 	"go-rocketmq/pkg/broker"
-	"go-rocketmq/pkg/client"
-	"go-rocketmq/pkg/common"
+	"github.com/chenjy16/go-rocketmq-client"
 	"go-rocketmq/pkg/nameserver"
 )
 
@@ -35,11 +34,11 @@ type TestResult struct {
 type IntegrationTestListener struct {
 	mu            sync.Mutex
 	receivedCount int
-	messages      []*common.MessageExt
+	messages      []*client.MessageExt
 	latencies     []time.Duration
 }
 
-func (l *IntegrationTestListener) ConsumeMessage(msgs []*common.MessageExt) common.ConsumeResult {
+func (l *IntegrationTestListener) ConsumeMessage(msgs []*client.MessageExt) client.ConsumeResult {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -58,7 +57,7 @@ func (l *IntegrationTestListener) ConsumeMessage(msgs []*common.MessageExt) comm
 		fmt.Printf("[消费者] 接收消息: %s (总计: %d)\n", string(msg.Body), l.receivedCount)
 	}
 
-	return common.ConsumeSuccess
+	return client.ConsumeSuccess
 }
 
 func (l *IntegrationTestListener) GetReceivedCount() int {
@@ -160,7 +159,7 @@ func runIntegrationTest(config *IntegrationTestConfig) (*TestResult, error) {
 	// 4. 启动消费者
 	fmt.Println("\n=== 步骤4: 启动消费者 ===")
 	listener := &IntegrationTestListener{
-		messages:  make([]*common.MessageExt, 0),
+		messages:  make([]*client.MessageExt, 0),
 		latencies: make([]time.Duration, 0),
 	}
 	consumer, err := startConsumer(nameServerAddr, topicName, listener)
@@ -259,8 +258,8 @@ func startConsumer(nameServerAddr, topicName string, listener *IntegrationTestLi
 	config := &client.ConsumerConfig{
 		GroupName:      "IntegrationTestConsumerGroup",
 		NameServerAddr: nameServerAddr,
-		ConsumeFromWhere: common.ConsumeFromFirstOffset,
-		MessageModel:   common.Clustering,
+		ConsumeFromWhere: client.ConsumeFromFirstOffset,
+		MessageModel:   client.Clustering,
 		PullInterval:   1 * time.Second,
 	}
 
@@ -304,7 +303,7 @@ func sendMessages(producer *client.Producer, topicName string, messageCount, con
 			defer func() { <-sem }() // 释放信号量
 
 			// 创建消息
-			msg := common.NewMessage(
+			msg := client.NewMessage(
 				topicName,
 				[]byte(fmt.Sprintf("集成测试消息 #%d", index+1)),
 			).SetTags("INTEGRATION_TEST").SetKeys(fmt.Sprintf("test_key_%d", index+1)).SetProperty("messageIndex", fmt.Sprintf("%d", index+1)).SetProperty("sendTime", time.Now().Format(time.RFC3339Nano))

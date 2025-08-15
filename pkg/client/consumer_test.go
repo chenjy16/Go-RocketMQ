@@ -5,17 +5,15 @@ import (
 	"fmt"
 	"testing"
 	"time"
-
-	"go-rocketmq/pkg/common"
 )
 
 // MockMessageListener 模拟消息监听器
 type MockMessageListener struct {
-	consumedMessages []*common.MessageExt
-	result           common.ConsumeResult
+	consumedMessages []*MessageExt
+	result           ConsumeResult
 }
 
-func (m *MockMessageListener) ConsumeMessage(messages []*common.MessageExt) common.ConsumeResult {
+func (m *MockMessageListener) ConsumeMessage(messages []*MessageExt) ConsumeResult {
 	m.consumedMessages = append(m.consumedMessages, messages...)
 	return m.result
 }
@@ -28,11 +26,11 @@ func TestDefaultConsumerConfig(t *testing.T) {
 		t.Errorf("Expected GroupName to be 'DefaultConsumerGroup', got %s", config.GroupName)
 	}
 	
-	if config.ConsumeFromWhere != common.ConsumeFromFirstOffset {
+	if config.ConsumeFromWhere != ConsumeFromFirstOffset {
 		t.Errorf("Expected ConsumeFromWhere to be ConsumeFromFirstOffset, got %v", config.ConsumeFromWhere)
 	}
 	
-	if config.MessageModel != common.Clustering {
+	if config.MessageModel != Clustering {
 		t.Errorf("Expected MessageModel to be Clustering, got %v", config.MessageModel)
 	}
 	
@@ -62,8 +60,8 @@ func TestConsumerConfig(t *testing.T) {
 	config := &ConsumerConfig{
 		GroupName:        "TestGroup",
 		NameServerAddr:   "127.0.0.1:9876",
-		ConsumeFromWhere: common.ConsumeFromLastOffset,
-		MessageModel:     common.Broadcasting,
+		ConsumeFromWhere: ConsumeFromLastOffset,
+		MessageModel:     Broadcasting,
 		ConsumeThreadMin: 2,
 		ConsumeThreadMax: 10,
 		PullInterval:     2 * time.Second,
@@ -95,7 +93,7 @@ func TestConsumerConfig(t *testing.T) {
 
 // TestSubscription 测试订阅信息
 func TestSubscription(t *testing.T) {
-	listener := &MockMessageListener{result: common.ConsumeSuccess}
+	listener := &MockMessageListener{result: ConsumeSuccess}
 	
 	sub := &Subscription{
 		Topic:         "TestTopic",
@@ -163,7 +161,7 @@ func TestSetNameServerAddr(t *testing.T) {
 // TestSubscribe 测试订阅主题
 func TestSubscribe(t *testing.T) {
 	consumer := NewConsumer(nil)
-	listener := &MockMessageListener{result: common.ConsumeSuccess}
+	listener := &MockMessageListener{result: ConsumeSuccess}
 	
 	// 测试正常订阅
 	err := consumer.Subscribe("TestTopic", "*", listener)
@@ -206,7 +204,7 @@ func TestSubscribe(t *testing.T) {
 // TestConsumerStartStop 测试消费者启动和停止
 func TestConsumerStartStop(t *testing.T) {
 	consumer := NewConsumer(nil)
-	listener := &MockMessageListener{result: common.ConsumeSuccess}
+	listener := &MockMessageListener{result: ConsumeSuccess}
 	
 	// 测试未订阅就启动
 	err := consumer.Start()
@@ -256,7 +254,7 @@ func TestConsumerStartStop(t *testing.T) {
 // TestGetSubscriptions 测试获取订阅信息
 func TestGetSubscriptions(t *testing.T) {
 	consumer := NewConsumer(nil)
-	listener := &MockMessageListener{result: common.ConsumeSuccess}
+	listener := &MockMessageListener{result: ConsumeSuccess}
 	
 	// 测试空订阅
 	subs := consumer.GetSubscriptions()
@@ -292,12 +290,12 @@ func TestGetSubscriptions(t *testing.T) {
 // TestConsumeMessages 测试消息消费
 func TestConsumeMessages(t *testing.T) {
 	consumer := NewConsumer(nil)
-	listener := &MockMessageListener{result: common.ConsumeSuccess}
+	listener := &MockMessageListener{result: ConsumeSuccess}
 	
 	// 创建测试消息
-	messages := []*common.MessageExt{
+	messages := []*MessageExt{
 		{
-			Message: &common.Message{
+			Message: &Message{
 				Topic: "TestTopic",
 				Body:  []byte("test message 1"),
 			},
@@ -306,7 +304,7 @@ func TestConsumeMessages(t *testing.T) {
 			StoreSize: 100,
 		},
 		{
-			Message: &common.Message{
+			Message: &Message{
 				Topic: "TestTopic",
 				Body:  []byte("test message 2"),
 			},
@@ -395,7 +393,7 @@ func BenchmarkNewConsumer(b *testing.B) {
 // BenchmarkSubscribe 基准测试订阅主题
 func BenchmarkSubscribe(b *testing.B) {
 	consumer := NewConsumer(nil)
-	listener := &MockMessageListener{result: common.ConsumeSuccess}
+	listener := &MockMessageListener{result: ConsumeSuccess}
 	
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -407,11 +405,11 @@ func BenchmarkSubscribe(b *testing.B) {
 // BenchmarkConsumeMessages 基准测试消息消费
 func BenchmarkConsumeMessages(b *testing.B) {
 	consumer := NewConsumer(nil)
-	listener := &MockMessageListener{result: common.ConsumeSuccess}
+	listener := &MockMessageListener{result: ConsumeSuccess}
 	
-	messages := []*common.MessageExt{
+	messages := []*MessageExt{
 		{
-			Message: &common.Message{
+			Message: &Message{
 				Topic: "BenchmarkTopic",
 				Body:  []byte("benchmark message"),
 			},
@@ -430,7 +428,7 @@ func BenchmarkConsumeMessages(b *testing.B) {
 // BenchmarkGetSubscriptions 基准测试获取订阅信息
 func BenchmarkGetSubscriptions(b *testing.B) {
 	consumer := NewConsumer(nil)
-	listener := &MockMessageListener{result: common.ConsumeSuccess}
+	listener := &MockMessageListener{result: ConsumeSuccess}
 	
 	// 添加一些订阅
 	for i := 0; i < 10; i++ {

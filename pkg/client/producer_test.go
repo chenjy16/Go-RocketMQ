@@ -5,9 +5,6 @@ import (
 	"fmt"
 	"testing"
 	"time"
-
-	"go-rocketmq/pkg/common"
-	"go-rocketmq/pkg/protocol"
 )
 
 // TestDefaultProducerConfig 测试默认生产者配置
@@ -157,9 +154,9 @@ func TestGetTopicRouteData(t *testing.T) {
 	producer := NewProducer("test-producer-group")
 
 	// 创建测试路由数据
-	routeData := &protocol.TopicRouteData{
+	routeData := &TopicRouteData{
 		OrderTopicConf: "",
-		QueueDatas: []*protocol.QueueData{
+		QueueDatas: []*QueueData{
 			{
 				BrokerName:     "broker-a",
 				ReadQueueNums:  4,
@@ -167,7 +164,7 @@ func TestGetTopicRouteData(t *testing.T) {
 				Perm:           6,
 			},
 		},
-		BrokerDatas: []*protocol.BrokerData{
+		BrokerDatas: []*BrokerData{
 			{
 				Cluster:     "DefaultCluster",
 				BrokerName:  "broker-a",
@@ -211,9 +208,9 @@ func TestSelectMessageQueue(t *testing.T) {
 	producer := NewProducer("test-producer-group")
 
 	// 创建测试路由数据
-	routeData := &protocol.TopicRouteData{
+	routeData := &TopicRouteData{
 		OrderTopicConf: "",
-		QueueDatas: []*protocol.QueueData{
+		QueueDatas: []*QueueData{
 			{
 				BrokerName:     "broker-a",
 				ReadQueueNums:  4,
@@ -227,7 +224,7 @@ func TestSelectMessageQueue(t *testing.T) {
 				Perm:           6,
 			},
 		},
-		BrokerDatas: []*protocol.BrokerData{
+		BrokerDatas: []*BrokerData{
 			{
 				Cluster:     "DefaultCluster",
 				BrokerName:  "broker-a",
@@ -263,10 +260,10 @@ func TestSelectMessageQueueWithEmptyRouteData(t *testing.T) {
 	producer := NewProducer("test-producer-group")
 
 	// 创建空的路由数据
-	routeData := &protocol.TopicRouteData{
+	routeData := &TopicRouteData{
 		OrderTopicConf:    "",
-		QueueDatas:        []*protocol.QueueData{},
-		BrokerDatas:       []*protocol.BrokerData{},
+		QueueDatas:        []*QueueData{},
+		BrokerDatas:       []*BrokerData{},
 		FilterServerTable: make(map[string][]string),
 	}
 
@@ -296,7 +293,7 @@ func TestSendSyncWithInvalidMessage(t *testing.T) {
 	}
 
 	// 测试发送空Topic的消息
-	msg := &common.Message{
+	msg := &Message{
 		Topic: "",
 		Body:  []byte("test message"),
 	}
@@ -306,7 +303,7 @@ func TestSendSyncWithInvalidMessage(t *testing.T) {
 	}
 
 	// 测试发送空Body的消息
-	msg = &common.Message{
+	msg = &Message{
 		Topic: "TestTopic",
 		Body:  nil,
 	}
@@ -329,7 +326,7 @@ func TestSendSyncWithTimeout(t *testing.T) {
 	defer producer.Shutdown()
 
 	// 创建测试消息
-	msg := &common.Message{
+	msg := &Message{
 		Topic:      "TestTopic",
 		Body:       []byte("test message with timeout"),
 		Properties: map[string]string{"TAGS": "TestTag"},
@@ -355,7 +352,7 @@ func TestSendOneway(t *testing.T) {
 	defer producer.Shutdown()
 
 	// 创建测试消息
-	msg := &common.Message{
+	msg := &Message{
 		Topic:      "TestTopic",
 		Body:       []byte("oneway message"),
 		Properties: map[string]string{"TAGS": "OnewayTag"},
@@ -381,7 +378,7 @@ func TestSendAsync(t *testing.T) {
 	defer producer.Shutdown()
 
 	// 创建测试消息
-	msg := &common.Message{
+	msg := &Message{
 		Topic:      "TestTopic",
 		Body:       []byte("async message"),
 		Properties: map[string]string{"TAGS": "AsyncTag"},
@@ -389,7 +386,7 @@ func TestSendAsync(t *testing.T) {
 
 	// 创建回调函数
 	callbackCalled := false
-	callback := func(result *common.SendResult, err error) {
+	callback := func(result *SendResult, err error) {
 		callbackCalled = true
 		if err == nil {
 			t.Error("Callback should receive an error without real broker")
@@ -422,7 +419,7 @@ func TestSendAsyncWithNilCallback(t *testing.T) {
 	defer producer.Shutdown()
 
 	// 创建测试消息
-	msg := &common.Message{
+	msg := &Message{
 		Topic:      "TestTopic",
 		Body:       []byte("async message with nil callback"),
 		Properties: map[string]string{"TAGS": "AsyncTag"},
@@ -453,7 +450,7 @@ func TestConcurrentSend(t *testing.T) {
 
 	for i := 0; i < numGoroutines; i++ {
 		go func(id int) {
-			msg := &common.Message{
+			msg := &Message{
 				Topic:      "TestTopic",
 				Body:       []byte(fmt.Sprintf("concurrent message %d", id)),
 				Properties: map[string]string{"TAGS": "ConcurrentTag"},
@@ -497,9 +494,9 @@ func BenchmarkGetTopicRouteData(b *testing.B) {
 	producer := NewProducer("benchmark-producer-group")
 
 	// 预先设置一些路由数据
-	routeData := &protocol.TopicRouteData{
+	routeData := &TopicRouteData{
 		OrderTopicConf: "",
-		QueueDatas: []*protocol.QueueData{
+		QueueDatas: []*QueueData{
 			{
 				BrokerName:     "broker-a",
 				ReadQueueNums:  4,
@@ -507,7 +504,7 @@ func BenchmarkGetTopicRouteData(b *testing.B) {
 				Perm:           6,
 			},
 		},
-		BrokerDatas: []*protocol.BrokerData{
+		BrokerDatas: []*BrokerData{
 			{
 				Cluster:     "DefaultCluster",
 				BrokerName:  "broker-a",
@@ -532,9 +529,9 @@ func BenchmarkSelectMessageQueue(b *testing.B) {
 	producer := NewProducer("benchmark-producer-group")
 
 	// 创建测试路由数据
-	routeData := &protocol.TopicRouteData{
+	routeData := &TopicRouteData{
 		OrderTopicConf: "",
-		QueueDatas: []*protocol.QueueData{
+		QueueDatas: []*QueueData{
 			{
 				BrokerName:     "broker-a",
 				ReadQueueNums:  4,
@@ -548,7 +545,7 @@ func BenchmarkSelectMessageQueue(b *testing.B) {
 				Perm:           6,
 			},
 		},
-		BrokerDatas: []*protocol.BrokerData{
+		BrokerDatas: []*BrokerData{
 			{
 				Cluster:     "DefaultCluster",
 				BrokerName:  "broker-a",

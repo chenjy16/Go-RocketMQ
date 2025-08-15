@@ -8,8 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"go-rocketmq/pkg/client"
-	"go-rocketmq/pkg/common"
+	"github.com/chenjy16/go-rocketmq-client"
 )
 
 // 管理工具配置
@@ -417,7 +416,7 @@ func sendTestMessage(admin *AdminClient, topicName, content string) {
 	defer producer.Shutdown()
 
 	// 创建消息
-	msg := common.NewMessage(
+	msg := client.NewMessage(
 		topicName,
 		[]byte(content),
 	).SetTags("ADMIN_TEST").SetKeys(fmt.Sprintf("admin_test_%d", time.Now().Unix())).SetProperty("source", "admin_tool").SetProperty("timestamp", time.Now().Format("2006-01-02 15:04:05"))
@@ -597,7 +596,7 @@ func testPerformance(admin *AdminClient) {
 
 	fmt.Printf("发送 %d 条测试消息...\n", messageCount)
 	for i := 0; i < messageCount; i++ {
-		msg := common.NewMessage(
+		msg := client.NewMessage(
 			"PerformanceTestTopic",
 			[]byte(fmt.Sprintf("性能测试消息 #%d", i+1)),
 		)

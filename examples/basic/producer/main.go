@@ -5,8 +5,7 @@ import (
 	"log"
 	"time"
 
-	"go-rocketmq/pkg/client"
-	"go-rocketmq/pkg/common"
+	"github.com/chenjy16/go-rocketmq-client"
 )
 
 func main() {
@@ -53,7 +52,7 @@ func main() {
 func sendSyncMessages(producer *client.Producer) {
 	for i := 0; i < 5; i++ {
 		// 创建消息
-		msg := common.NewMessage(
+		msg := client.NewMessage(
 			"TestTopic",
 			[]byte(fmt.Sprintf("同步消息内容 #%d - %s", i+1, time.Now().Format("2006-01-02 15:04:05"))),
 		)
@@ -77,13 +76,13 @@ func sendSyncMessages(producer *client.Producer) {
 func sendAsyncMessages(producer *client.Producer) {
 	for i := 0; i < 3; i++ {
 		// 创建消息
-		msg := common.NewMessage(
+		msg := client.NewMessage(
 			"TestTopic",
 			[]byte(fmt.Sprintf("异步消息内容 #%d - %s", i+1, time.Now().Format("2006-01-02 15:04:05"))),
 		)
 
 		// 发送异步消息
-		err := producer.SendAsync(msg, func(result *common.SendResult, err error) {
+		err := producer.SendAsync(msg, func(result *client.SendResult, err error) {
 			if err != nil {
 				log.Printf("异步消息发送失败: %v", err)
 				return
@@ -107,7 +106,7 @@ func sendAsyncMessages(producer *client.Producer) {
 func sendOnewayMessages(producer *client.Producer) {
 	for i := 0; i < 3; i++ {
 		// 创建消息
-		msg := common.NewMessage(
+		msg := client.NewMessage(
 			"TestTopic",
 			[]byte(fmt.Sprintf("单向消息内容 #%d - %s", i+1, time.Now().Format("2006-01-02 15:04:05"))),
 		)
@@ -130,7 +129,7 @@ func sendTaggedMessages(producer *client.Producer) {
 
 	for _, tag := range tags {
 		// 创建带标签的消息
-		msg := common.NewMessage(
+		msg := client.NewMessage(
 			"TestTopic",
 			[]byte(fmt.Sprintf("带标签的消息内容 - Tag: %s, Time: %s", tag, time.Now().Format("2006-01-02 15:04:05"))),
 		).SetTags(tag)
@@ -151,7 +150,7 @@ func sendTaggedMessages(producer *client.Producer) {
 func sendMessageWithProperties(producer *client.Producer) {
 	for i := 0; i < 3; i++ {
 		// 创建带属性的消息
-		msg := common.NewMessage(
+		msg := client.NewMessage(
 			"TestTopic",
 			[]byte(fmt.Sprintf("带属性的消息内容 #%d - %s", i+1, time.Now().Format("2006-01-02 15:04:05"))),
 		).SetKeys(fmt.Sprintf("key_%d", i+1)).SetProperty("userId", fmt.Sprintf("user_%d", i+1)).SetProperty("orderId", fmt.Sprintf("order_%d", i+1)).SetProperty("priority", "high")
