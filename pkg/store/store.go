@@ -12,6 +12,20 @@ import (
 	"go-rocketmq/pkg/common"
 )
 
+// MessageTrace 消息轨迹结构
+type MessageTrace struct {
+	MsgId      string            `json:"msgId"`
+	Topic      string            `json:"topic"`
+	Tags       string            `json:"tags"`
+	Keys       string            `json:"keys"`
+	QueueId    int32             `json:"queueId"`
+	Offset     int64             `json:"offset"`
+	StoreTime  int64             `json:"storeTime"`
+	BodySize   int32             `json:"bodySize"`
+	Status     string            `json:"status"`
+	Properties map[string]string `json:"properties"`
+}
+
 // StoreConfig 存储配置
 type StoreConfig struct {
 	// 存储根目录
@@ -69,9 +83,11 @@ type DefaultMessageStore struct {
 	delayQueueService    *DelayQueueService
 	transactionService   *TransactionService
 	orderedQueueService  *OrderedQueueService
+	persistenceManager   *PersistenceManager
 	
 	// 控制字段
 	running bool
+	shutdownOnce sync.Once
 	mutex   sync.RWMutex
 	
 	// 停止信号
@@ -108,11 +124,14 @@ func NewDefaultMessageStore(config *StoreConfig) (*DefaultMessageStore, error) {
 	// 初始化IndexService
 	store.indexService = NewIndexService(config.StorePathIndex)
 	
+	// 初始化持久化管理器（必须在其他服务之前初始化）
+	store.persistenceManager = NewPersistenceManager(config)
+	
 	// 初始化延迟队列服务
 	store.delayQueueService = NewDelayQueueService(config, store)
 	
 	// 初始化事务消息服务
-	store.transactionService = NewTransactionService(config, store)
+	store.transactionService = NewTransactionService(config, store, store.persistenceManager)
 	
 	// 初始化顺序队列服务
 	store.orderedQueueService = NewOrderedQueueService(config, store)
@@ -175,6 +194,11 @@ func (store *DefaultMessageStore) Start() error {
 		return fmt.Errorf("message store is already running")
 	}
 	
+	// 启动持久化管理器（必须在其他服务之前启动）
+	if err := store.persistenceManager.Start(); err != nil {
+		return fmt.Errorf("failed to start persistence manager: %v", err)
+	}
+	
 	// 恢复ConsumeQueue
 	if err := store.recoverConsumeQueues(); err != nil {
 		return fmt.Errorf("failed to recover consume queues: %v", err)
@@ -211,33 +235,38 @@ func (store *DefaultMessageStore) Start() error {
 
 // Shutdown 关闭消息存储
 func (store *DefaultMessageStore) Shutdown() {
-	store.mutex.Lock()
-	defer store.mutex.Unlock()
-	
-	if !store.running {
-		return
-	}
-	
-	// 发送停止信号
-	close(store.shutdown)
-	
-	// 停止新增服务
-	store.delayQueueService.Shutdown()
-	store.transactionService.Shutdown()
-	store.orderedQueueService.Shutdown()
-	
-	// 停止IndexService
-	store.indexService.Shutdown()
-	
-	// 停止CommitLog
-	store.commitLog.Shutdown()
-	
-	// 停止所有ConsumeQueue
-	for _, cq := range store.consumeQueueTable {
-		cq.Shutdown()
-	}
-	
-	store.running = false
+	store.shutdownOnce.Do(func() {
+		store.mutex.Lock()
+		defer store.mutex.Unlock()
+		
+		if !store.running {
+			return
+		}
+		
+		// 发送停止信号
+		close(store.shutdown)
+		
+		// 停止新增服务
+		store.delayQueueService.Shutdown()
+		store.transactionService.Shutdown()
+		store.orderedQueueService.Shutdown()
+		
+		// 停止持久化管理器
+		store.persistenceManager.Stop()
+		
+		// 停止IndexService
+		store.indexService.Shutdown()
+		
+		// 停止CommitLog
+		store.commitLog.Shutdown()
+		
+		// 停止所有ConsumeQueue
+		for _, cq := range store.consumeQueueTable {
+			cq.Shutdown()
+		}
+		
+		store.running = false
+	})
 }
 
 // PutMessage 存储消息
@@ -309,9 +338,25 @@ func (store *DefaultMessageStore) updateIndex(msgExt *common.MessageExt, result 
 		keys = append(keys, uniqKey)
 	}
 	
+	// 添加消息ID作为索引key
+	if result.MsgId != "" {
+		keys = append(keys, result.MsgId)
+	}
+	
 	// 构建索引
 	for _, key := range keys {
 		store.indexService.BuildIndex(key, msgExt.CommitLogOffset, msgExt.StoreTimestamp.UnixMilli())
+		
+		// 同时添加到持久化管理器的消息索引
+		msgIndex := &MessageIndex{
+			MessageKey: key,
+			Topic:      msgExt.Topic,
+			QueueId:    msgExt.QueueId,
+			Offset:     msgExt.QueueOffset,
+			StoreTime:  msgExt.StoreTimestamp.UnixMilli(),
+			Tags:       msgExt.Tags,
+		}
+		store.persistenceManager.AddMessageIndex(key, msgIndex)
 	}
 	
 	return nil
@@ -469,17 +514,128 @@ func (store *DefaultMessageStore) PullOrderedMessage(topic string, queueId int32
 
 // CommitConsumeOffset 提交消费进度
 func (store *DefaultMessageStore) CommitConsumeOffset(topic string, queueId int32, consumerGroup string, offset int64) error {
+	// 更新持久化管理器中的消费进度
+	store.persistenceManager.UpdateConsumeProgress(topic, queueId, consumerGroup, offset)
+	// 同时更新顺序队列服务中的消费进度
 	return store.orderedQueueService.CommitConsumeOffset(topic, queueId, consumerGroup, offset)
 }
 
 // GetConsumeOffset 获取消费进度
 func (store *DefaultMessageStore) GetConsumeOffset(topic string, queueId int32, consumerGroup string) int64 {
+	// 优先从持久化管理器获取消费进度
+	offset := store.persistenceManager.GetConsumeProgress(topic, queueId, consumerGroup)
+	if offset != -1 {
+		return offset
+	}
+	// 如果持久化管理器中没有，则从顺序队列服务获取
 	return store.orderedQueueService.GetConsumeOffset(topic, queueId, consumerGroup)
 }
 
 // GetCommitLog 获取CommitLog实例
 func (store *DefaultMessageStore) GetCommitLog() *CommitLog {
 	return store.commitLog
+}
+
+// ========== 索引查询相关方法 ==========
+
+// QueryMessageByKey 根据Key查询消息
+func (store *DefaultMessageStore) QueryMessageByKey(topic, key string, maxNum int32, begin, end int64) ([]*common.MessageExt, error) {
+	// 从IndexService查询物理偏移量
+	offsets, err := store.indexService.QueryOffset(topic, key, maxNum, begin, end)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query offsets by key: %v", err)
+	}
+	
+	var messages []*common.MessageExt
+	for _, offset := range offsets {
+		// 从CommitLog读取消息，需要先获取消息大小
+		// 这里简化处理，假设消息大小不超过64KB
+		msg, err := store.commitLog.GetMessage(offset, 65536)
+		if err != nil {
+			continue // 跳过读取失败的消息
+		}
+		
+		// 验证消息是否匹配条件
+		if msg.Topic == topic && (msg.Keys == key || msg.GetProperty("UNIQ_KEY") == key) {
+			// 检查时间范围
+			if msg.StoreTimestamp.UnixMilli() >= begin && msg.StoreTimestamp.UnixMilli() <= end {
+				messages = append(messages, msg)
+			}
+		}
+		
+		if int32(len(messages)) >= maxNum {
+			break
+		}
+	}
+	
+	return messages, nil
+}
+
+// QueryMessageByTimeRange 根据时间范围查询消息
+func (store *DefaultMessageStore) QueryMessageByTimeRange(topic string, startTime, endTime int64, maxNum int32) ([]*common.MessageExt, error) {
+	// 从持久化管理器查询消息索引
+	indexes := store.persistenceManager.QueryMessagesByTimeRange(startTime, endTime)
+	
+	var messages []*common.MessageExt
+	for _, index := range indexes {
+		// 过滤指定topic
+		if topic != "" && index.Topic != topic {
+			continue
+		}
+		
+		// 根据队列偏移量获取消息
+		msg, err := store.GetMessage(index.Topic, index.QueueId, index.Offset, 1)
+		if err != nil || len(msg) == 0 {
+			continue
+		}
+		
+		messages = append(messages, msg[0])
+		if int32(len(messages)) >= maxNum {
+			break
+		}
+	}
+	
+	return messages, nil
+}
+
+// QueryMessageTrace 查询消息轨迹
+func (store *DefaultMessageStore) QueryMessageTrace(msgId string) (*MessageTrace, error) {
+	// 首先尝试从消息索引中查找
+	msgIndex := store.persistenceManager.GetMessageIndex(msgId)
+	if msgIndex == nil {
+		return nil, fmt.Errorf("message trace not found for msgId: %s", msgId)
+	}
+	
+	// 构建消息轨迹
+	trace := &MessageTrace{
+		MsgId:     msgId,
+		Topic:     msgIndex.Topic,
+		Tags:      msgIndex.Tags,
+		QueueId:   msgIndex.QueueId,
+		Offset:    msgIndex.Offset,
+		StoreTime: msgIndex.StoreTime,
+		Status:    "STORED",
+	}
+	
+	// 尝试获取完整消息信息
+	msg, err := store.GetMessage(msgIndex.Topic, msgIndex.QueueId, msgIndex.Offset, 1)
+	if err == nil && len(msg) > 0 {
+		trace.Keys = msg[0].Keys
+		trace.BodySize = int32(len(msg[0].Body))
+		trace.Properties = msg[0].Properties
+	}
+	
+	return trace, nil
+}
+
+// GetMessageIndex 获取消息索引
+func (store *DefaultMessageStore) GetMessageIndex(messageKey string) *MessageIndex {
+	return store.persistenceManager.GetMessageIndex(messageKey)
+}
+
+// QueryMessagesByKey 根据Key查询消息索引
+func (store *DefaultMessageStore) QueryMessagesByKey(messageKey string) []*MessageIndex {
+	return store.persistenceManager.QueryMessagesByKey(messageKey)
 }
 
 // recoverConsumeQueues 恢复ConsumeQueue

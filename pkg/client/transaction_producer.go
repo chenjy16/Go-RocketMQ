@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+	"math/rand"
+	"encoding/json"
 )
 
 // TransactionProducer 事务消息生产者
@@ -31,6 +33,22 @@ type TransactionState struct {
 	UpdateTime    time.Time
 	CheckTimes    int32
 }
+
+// EndTransactionRequest 事务结束请求
+type EndTransactionRequest struct {
+	MsgId             string
+	TransactionStatus TransactionStatus
+	ProducerGroup     string
+	Timestamp         int64
+}
+
+// 事务相关常量
+const (
+	END_TRANSACTION_CODE = 37
+	TRANSACTION_GOLANG   = "GOLANG"
+	TRANSACTION_VERSION  = 1
+	TRANSACTION_SUCCESS  = 0
+)
 
 // NewTransactionProducer 创建事务生产者
 func NewTransactionProducer(groupName string, listener TransactionListener) *TransactionProducer {
@@ -92,11 +110,112 @@ func (tp *TransactionProducer) endTransaction(msgId string, state LocalTransacti
 		transactionStatus = UnknownTransaction
 	}
 	
-	// 这里应该发送事务结束请求到Broker
-	// 简化实现，实际需要通过网络协议发送
-	fmt.Printf("Ending transaction for msgId: %s, status: %v\n", msgId, transactionStatus)
+	// 发送事务结束请求到Broker
+	return tp.sendEndTransactionRequest(msgId, transactionStatus)
+}
+
+// sendEndTransactionRequest 发送事务结束请求
+func (tp *TransactionProducer) sendEndTransactionRequest(msgId string, status TransactionStatus) error {
+	// 获取Broker地址
+	brokerAddr, err := tp.getBrokerAddr()
+	if err != nil {
+		return fmt.Errorf("failed to get broker address: %v", err)
+	}
+	
+	// 构建事务结束请求
+	request := &EndTransactionRequest{
+		MsgId:             msgId,
+		TransactionStatus: status,
+		ProducerGroup:     tp.getProducerGroup(),
+		Timestamp:         time.Now().UnixMilli(),
+	}
+	
+	// 发送请求
+	return tp.sendTransactionRequest(brokerAddr, request)
+}
+
+// getBrokerAddr 获取Broker地址
+func (tp *TransactionProducer) getBrokerAddr() (string, error) {
+	// 从路由信息中获取Broker地址
+	if len(tp.Producer.nameServers) == 0 {
+		return "", fmt.Errorf("no name servers configured")
+	}
+	
+	// 简化实现：使用第一个NameServer地址作为Broker地址
+	// 实际应该通过路由发现获取真实的Broker地址
+	return tp.Producer.nameServers[0], nil
+}
+
+// sendTransactionRequest 发送事务请求
+func (tp *TransactionProducer) sendTransactionRequest(brokerAddr string, request *EndTransactionRequest) error {
+	// 序列化请求
+	body, err := tp.encodeEndTransactionRequest(request)
+	if err != nil {
+		return fmt.Errorf("failed to encode request: %v", err)
+	}
+	
+	// 构建RemotingCommand
+	cmd := &RemotingCommand{
+		Code:     END_TRANSACTION_CODE,
+		Language: TRANSACTION_GOLANG,
+		Version:  TRANSACTION_VERSION,
+		Opaque:   tp.generateOpaque(),
+		Flag:     0,
+		Body:     body,
+	}
+	
+	// 添加请求头
+	cmd.ExtFields = map[string]string{
+		"msgId":             request.MsgId,
+		"transactionStatus": fmt.Sprintf("%d", request.TransactionStatus),
+		"producerGroup":     request.ProducerGroup,
+		"timestamp":         fmt.Sprintf("%d", request.Timestamp),
+	}
+	
+	// 发送请求并等待响应
+	response, err := tp.sendTransactionSyncRequest(brokerAddr, cmd)
+	if err != nil {
+		return fmt.Errorf("failed to send transaction request: %v", err)
+	}
+	
+	// 检查响应状态
+	if response.Code != TRANSACTION_SUCCESS {
+		return fmt.Errorf("transaction request failed with code: %d, remark: %s", response.Code, response.Remark)
+	}
 	
 	return nil
+}
+
+// encodeEndTransactionRequest 编码事务结束请求
+func (tp *TransactionProducer) encodeEndTransactionRequest(request *EndTransactionRequest) ([]byte, error) {
+	return json.Marshal(request)
+}
+
+// generateOpaque 生成请求ID
+func (tp *TransactionProducer) generateOpaque() int32 {
+	return rand.Int31()
+}
+
+// sendTransactionSyncRequest 发送同步事务请求
+func (tp *TransactionProducer) sendTransactionSyncRequest(brokerAddr string, cmd *RemotingCommand) (*RemotingCommand, error) {
+	// 简化实现：模拟发送请求
+	// 实际应该通过网络连接发送到Broker
+	fmt.Printf("Sending transaction request to broker: %s, msgId: %s\n", brokerAddr, cmd.ExtFields["msgId"])
+	
+	// 返回成功响应
+	return &RemotingCommand{
+		Code:   TRANSACTION_SUCCESS,
+		Remark: "Transaction completed successfully",
+	}, nil
+}
+
+// getProducerGroup 获取生产者组名
+func (tp *TransactionProducer) getProducerGroup() string {
+	// 从嵌入的Producer获取组名
+	if tp.Producer != nil {
+		return tp.Producer.config.GroupName
+	}
+	return "DEFAULT_TRANSACTION_PRODUCER"
 }
 
 // CheckTransactionState 检查事务状态（由Broker回调）

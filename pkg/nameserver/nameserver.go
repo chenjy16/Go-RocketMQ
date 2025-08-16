@@ -1,7 +1,12 @@
 package nameserver
 
 import (
+	"bufio"
+	"bytes"
+	"encoding/binary"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"sync"
@@ -148,8 +153,27 @@ func (ns *NameServer) handleConnection(conn net.Conn) {
 		}
 	}
 	
-	// TODO: 实现完整的协议处理逻辑
-	// 这里应该实现RocketMQ的通信协议解析和处理
+	// 处理RocketMQ协议消息
+	reader := bufio.NewReader(conn)
+	for {
+		// 读取并处理请求
+		request, err := ns.readRemotingCommand(reader)
+		if err != nil {
+			if err != io.EOF {
+				log.Printf("Failed to read request from %s: %v", remoteAddr, err)
+			}
+			break
+		}
+		
+		// 处理请求并生成响应
+		response := ns.processRequest(request, conn)
+		
+		// 发送响应
+		if err := ns.writeRemotingCommand(conn, response); err != nil {
+			log.Printf("Failed to write response to %s: %v", remoteAddr, err)
+			break
+		}
+	}
 }
 
 // RegisterBroker 注册Broker
@@ -458,6 +482,259 @@ func (ns *NameServer) ReloadAclConfig() error {
 		return fmt.Errorf("ACL is not enabled")
 	}
 	return ns.aclMiddleware.ReloadConfig()
+}
+
+// readRemotingCommand 读取RocketMQ协议命令
+func (ns *NameServer) readRemotingCommand(reader *bufio.Reader) (*protocol.RemotingCommand, error) {
+	// 读取消息长度（4字节）
+	lengthBytes := make([]byte, 4)
+	if _, err := io.ReadFull(reader, lengthBytes); err != nil {
+		return nil, err
+	}
+	
+	msgLength := binary.BigEndian.Uint32(lengthBytes)
+	if msgLength == 0 || msgLength > 16*1024*1024 { // 最大16MB
+		return nil, fmt.Errorf("invalid message length: %d", msgLength)
+	}
+	
+	// 读取消息内容
+	msgData := make([]byte, msgLength)
+	if _, err := io.ReadFull(reader, msgData); err != nil {
+		return nil, err
+	}
+	
+	// 解析协议头长度（前4字节）
+	headerLength := binary.BigEndian.Uint32(msgData[:4])
+	if headerLength > msgLength-4 {
+		return nil, fmt.Errorf("invalid header length: %d", headerLength)
+	}
+	
+	// 解析协议头
+	headerData := msgData[4 : 4+headerLength]
+	var command protocol.RemotingCommand
+	if err := json.Unmarshal(headerData, &command); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal header: %v", err)
+	}
+	
+	// 设置消息体
+	if msgLength > 4+headerLength {
+		command.Body = msgData[4+headerLength:]
+	}
+	
+	return &command, nil
+}
+
+// writeRemotingCommand 写入RocketMQ协议命令
+func (ns *NameServer) writeRemotingCommand(conn net.Conn, command *protocol.RemotingCommand) error {
+	// 序列化协议头
+	headerData, err := json.Marshal(command)
+	if err != nil {
+		return fmt.Errorf("failed to marshal header: %v", err)
+	}
+	
+	// 计算总长度
+	headerLength := len(headerData)
+	bodyLength := len(command.Body)
+	totalLength := 4 + headerLength + bodyLength // 4字节头长度 + 头数据 + 体数据
+	
+	// 构造完整消息
+	buf := bytes.NewBuffer(make([]byte, 0, 4+totalLength))
+	
+	// 写入总长度
+	lengthBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(lengthBytes, uint32(totalLength))
+	buf.Write(lengthBytes)
+	
+	// 写入头长度
+	headerLengthBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(headerLengthBytes, uint32(headerLength))
+	buf.Write(headerLengthBytes)
+	
+	// 写入头数据
+	buf.Write(headerData)
+	
+	// 写入体数据
+	if bodyLength > 0 {
+		buf.Write(command.Body)
+	}
+	
+	// 发送数据
+	_, err = conn.Write(buf.Bytes())
+	return err
+}
+
+// processRequest 处理请求
+func (ns *NameServer) processRequest(request *protocol.RemotingCommand, conn net.Conn) *protocol.RemotingCommand {
+	switch protocol.RequestCode(request.Code) {
+	case protocol.RegisterBroker:
+		return ns.handleRegisterBroker(request, conn)
+	case protocol.UnregisterBroker:
+		return ns.handleUnregisterBroker(request)
+	case protocol.GetRouteInfoByTopic:
+		return ns.handleGetRouteInfoByTopic(request)
+	case protocol.GetBrokerClusterInfo:
+		return ns.handleGetBrokerClusterInfo(request)
+	case protocol.UpdateAndCreateTopic:
+		return ns.handleUpdateAndCreateTopic(request)
+	default:
+		log.Printf("Unsupported request code: %d", request.Code)
+		return ns.createErrorResponse(request, protocol.RequestCodeNotSupported, "Unsupported request code")
+	}
+}
+
+// handleRegisterBroker 处理Broker注册请求
+func (ns *NameServer) handleRegisterBroker(request *protocol.RemotingCommand, conn net.Conn) *protocol.RemotingCommand {
+	// 解析请求参数
+	clusterName := request.ExtFields["clusterName"]
+	brokerName := request.ExtFields["brokerName"]
+	brokerAddr := request.ExtFields["brokerAddr"]
+	haServerAddr := request.ExtFields["haServerAddr"]
+	
+	// 解析TopicConfig数据
+	var topicConfigWrapper *protocol.TopicConfigSerializeWrapper
+	if len(request.Body) > 0 {
+		topicConfigWrapper = &protocol.TopicConfigSerializeWrapper{}
+		if err := json.Unmarshal(request.Body, topicConfigWrapper); err != nil {
+			log.Printf("Failed to unmarshal topic config: %v", err)
+			return ns.createErrorResponse(request, protocol.SystemError, "Invalid topic config data")
+		}
+	}
+	
+	// 注册Broker
+	result := ns.RegisterBroker(clusterName, brokerAddr, brokerName, 0, haServerAddr, topicConfigWrapper, nil, conn)
+	
+	// 创建响应
+	response := ns.createSuccessResponse(request)
+	responseData, _ := json.Marshal(result)
+	response.Body = responseData
+	
+	return response
+}
+
+// handleUnregisterBroker 处理Broker注销请求
+func (ns *NameServer) handleUnregisterBroker(request *protocol.RemotingCommand) *protocol.RemotingCommand {
+	clusterName := request.ExtFields["clusterName"]
+	brokerName := request.ExtFields["brokerName"]
+	brokerAddr := request.ExtFields["brokerAddr"]
+	
+	ns.mutex.Lock()
+	defer ns.mutex.Unlock()
+	
+	// 从路由表中移除Broker信息
+	ns.routeTable.mutex.Lock()
+	defer ns.routeTable.mutex.Unlock()
+	
+	// 移除Broker地址
+	if brokerAddrs, exists := ns.routeTable.brokerAddrTable[brokerName]; exists {
+		for brokerId, addr := range brokerAddrs {
+			if addr == brokerAddr {
+				delete(brokerAddrs, brokerId)
+				break
+			}
+		}
+		if len(brokerAddrs) == 0 {
+			delete(ns.routeTable.brokerAddrTable, brokerName)
+		}
+	}
+	
+	// 移除集群信息
+	if brokerNames, exists := ns.routeTable.clusterAddrTable[clusterName]; exists {
+		for i, name := range brokerNames {
+			if name == brokerName {
+				ns.routeTable.clusterAddrTable[clusterName] = append(brokerNames[:i], brokerNames[i+1:]...)
+				break
+			}
+		}
+	}
+	
+	// 移除存活信息
+	delete(ns.routeTable.brokerLiveTable, brokerAddr)
+	
+	log.Printf("Unregistered broker: %s from cluster: %s", brokerName, clusterName)
+	return ns.createSuccessResponse(request)
+}
+
+// handleGetRouteInfoByTopic 处理获取Topic路由信息请求
+func (ns *NameServer) handleGetRouteInfoByTopic(request *protocol.RemotingCommand) *protocol.RemotingCommand {
+	topic := request.ExtFields["topic"]
+	if topic == "" {
+		return ns.createErrorResponse(request, protocol.TopicNotExist, "Topic name is empty")
+	}
+	
+	routeData := ns.GetRouteInfoByTopic(topic)
+	if routeData == nil {
+		return ns.createErrorResponse(request, protocol.TopicNotExist, fmt.Sprintf("Topic %s not exist", topic))
+	}
+	
+	response := ns.createSuccessResponse(request)
+	responseData, _ := json.Marshal(routeData)
+	response.Body = responseData
+	
+	return response
+}
+
+// handleGetBrokerClusterInfo 处理获取集群信息请求
+func (ns *NameServer) handleGetBrokerClusterInfo(request *protocol.RemotingCommand) *protocol.RemotingCommand {
+	clusterInfo := ns.GetAllClusterInfo()
+	
+	response := ns.createSuccessResponse(request)
+	responseData, _ := json.Marshal(clusterInfo)
+	response.Body = responseData
+	
+	return response
+}
+
+// handleUpdateAndCreateTopic 处理更新和创建Topic请求
+func (ns *NameServer) handleUpdateAndCreateTopic(request *protocol.RemotingCommand) *protocol.RemotingCommand {
+	topic := request.ExtFields["topic"]
+	if topic == "" {
+		return ns.createErrorResponse(request, protocol.MessageIllegal, "Topic name is empty")
+	}
+	
+	// 解析TopicConfig
+	var topicConfig protocol.TopicConfig
+	if len(request.Body) > 0 {
+		if err := json.Unmarshal(request.Body, &topicConfig); err != nil {
+			return ns.createErrorResponse(request, protocol.MessageIllegal, "Invalid topic config")
+		}
+	} else {
+		// 使用默认配置
+		topicConfig = protocol.TopicConfig{
+			TopicName:      topic,
+			ReadQueueNums:  4,
+			WriteQueueNums: 4,
+			Perm:           6, // 读写权限
+		}
+	}
+	
+	// 更新Topic配置（这里简化处理，实际应该通知所有Broker）
+	log.Printf("Updated topic config: %s", topic)
+	
+	return ns.createSuccessResponse(request)
+}
+
+// createSuccessResponse 创建成功响应
+func (ns *NameServer) createSuccessResponse(request *protocol.RemotingCommand) *protocol.RemotingCommand {
+	return &protocol.RemotingCommand{
+		Code:     protocol.RequestCode(protocol.Success),
+		Language: "JAVA",
+		Version:  request.Version,
+		Opaque:   request.Opaque,
+		Flag:     1, // 响应标志
+		Remark:   "",
+	}
+}
+
+// createErrorResponse 创建错误响应
+func (ns *NameServer) createErrorResponse(request *protocol.RemotingCommand, code protocol.ResponseCode, remark string) *protocol.RemotingCommand {
+	return &protocol.RemotingCommand{
+		Code:     protocol.RequestCode(code),
+		Language: "JAVA",
+		Version:  request.Version,
+		Opaque:   request.Opaque,
+		Flag:     1, // 响应标志
+		Remark:   remark,
+	}
 }
 
 // DefaultConfig 返回默认配置

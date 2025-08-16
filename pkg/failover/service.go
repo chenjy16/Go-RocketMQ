@@ -12,6 +12,7 @@ import (
 // FailoverService 故障转移服务
 type FailoverService struct {
 	clusterManager   *cluster.ClusterManager
+	dataSyncService  *DataSyncService
 	running          bool
 	mutex            sync.RWMutex
 	shutdown         chan struct{}
@@ -118,6 +119,7 @@ const (
 func NewFailoverService(cm *cluster.ClusterManager) *FailoverService {
 	return &FailoverService{
 		clusterManager:   cm,
+		dataSyncService:  NewDataSyncService(cm),
 		shutdown:         make(chan struct{}),
 		failoverPolicies: make(map[string]*FailoverPolicy),
 		failoverHistory:  make([]*FailoverEvent, 0),
@@ -140,6 +142,11 @@ func (fs *FailoverService) Start() error {
 	fs.running = true
 	log.Printf("Starting failover service")
 
+	// 启动数据同步服务
+	if err := fs.dataSyncService.Start(); err != nil {
+		return fmt.Errorf("failed to start data sync service: %v", err)
+	}
+
 	// 启动监控goroutine
 	go fs.monitorBrokers()
 
@@ -160,6 +167,10 @@ func (fs *FailoverService) Stop() {
 
 	log.Printf("Stopping failover service")
 	fs.running = false
+
+	// 停止数据同步服务
+	fs.dataSyncService.Stop()
+
 	close(fs.shutdown)
 }
 
@@ -376,7 +387,41 @@ func (fs *FailoverService) stopMasterWrites(masterBroker string) error {
 // waitForSlaveSync 等待从节点同步
 func (fs *FailoverService) waitForSlaveSync(slaveBroker string) error {
 	log.Printf("Waiting for slave sync on broker: %s", slaveBroker)
-	// 简化实现：等待固定时间
+
+	// 检查是否有正在进行的同步任务
+	syncTasks := fs.dataSyncService.GetAllSyncTasks()
+	for _, task := range syncTasks {
+		if task.SlaveBroker == slaveBroker && task.Status == SYNC_RUNNING {
+			log.Printf("Found active sync task %s for slave %s, waiting for completion", task.TaskId, slaveBroker)
+			
+			// 等待同步完成，最多等待30秒
+			timeout := time.After(30 * time.Second)
+			ticker := time.NewTicker(1 * time.Second)
+			defer ticker.Stop()
+			
+			for {
+				select {
+				case <-timeout:
+					return fmt.Errorf("timeout waiting for slave sync on %s", slaveBroker)
+				case <-ticker.C:
+					updatedTask, exists := fs.dataSyncService.GetSyncTask(task.TaskId)
+					if !exists {
+						return fmt.Errorf("sync task %s disappeared", task.TaskId)
+					}
+					if updatedTask.Status == SYNC_SUCCESS {
+						log.Printf("Slave sync completed successfully for %s", slaveBroker)
+						return nil
+					}
+					if updatedTask.Status == SYNC_FAILED {
+						return fmt.Errorf("slave sync failed for %s: %s", slaveBroker, updatedTask.ErrorMessage)
+					}
+				}
+			}
+		}
+	}
+
+	// 如果没有活跃的同步任务，等待固定时间确保数据一致性
+	log.Printf("No active sync task found, waiting for data consistency")
 	time.Sleep(2 * time.Second)
 	return nil
 }

@@ -28,6 +28,10 @@ type Producer struct {
 	traceManager *TraceManager
 	// ACL中间件
 	aclMiddleware *ACLMiddleware
+	// TODO: 添加remoting组件
+	// remotingClient *remoting.RemotingClient
+	// routeManager   *remoting.RouteManager
+	// heartbeatManager *remoting.HeartbeatManager
 }
 
 // DelayMessageScheduler 延时消息调度器
@@ -637,6 +641,9 @@ func (p *Producer) selectMessageQueue(routeData *TopicRouteData, topic string) *
 
 // sendMessageToQueue 发送消息到指定队列
 func (p *Producer) sendMessageToQueue(msg *Message, mq *MessageQueue, timeout time.Duration) (*SendResult, error) {
+	// TODO: 使用remoting组件实现真实Broker交互
+	// 当前保持原有实现，待remoting组件集成完成后替换
+	
 	// 1. 根据MessageQueue找到Broker地址
 	routeData := p.getTopicRouteData(mq.Topic)
 	if routeData == nil {

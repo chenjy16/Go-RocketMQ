@@ -345,13 +345,9 @@ func TestGetMessage(t *testing.T) {
 	}
 	
 	// 测试获取不存在的主题
-	messages, err = store.GetMessage("NonExistentTopic", 0, 0, 10)
-	if err != nil {
-		t.Fatalf("Failed to get messages for non-existent topic: %v", err)
-	}
-	
-	if len(messages) != 0 {
-		t.Errorf("Expected 0 messages for non-existent topic, got %d", len(messages))
+	_, err = store.GetMessage("NonExistentTopic", 0, 0, 10)
+	if err == nil {
+	    t.Error("Expected error for non-existent topic")
 	}
 }
 

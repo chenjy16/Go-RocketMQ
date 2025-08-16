@@ -77,16 +77,19 @@ type TransactionService struct {
 	checkTimer      *time.Timer
 	listeners       map[string]TransactionListener // producerGroup -> TransactionListener
 	listenerMutex   sync.RWMutex
+	// 持久化管理器
+	persistenceManager *PersistenceManager
 }
 
 // NewTransactionService 创建事务消息服务
-func NewTransactionService(storeConfig *StoreConfig, messageStore *DefaultMessageStore) *TransactionService {
+func NewTransactionService(storeConfig *StoreConfig, messageStore *DefaultMessageStore, persistenceManager *PersistenceManager) *TransactionService {
 	return &TransactionService{
-		storeConfig:    storeConfig,
-		messageStore:   messageStore,
-		shutdown:       make(chan struct{}),
-		transactionMap: make(map[string]*TransactionRecord),
-		listeners:      make(map[string]TransactionListener),
+		storeConfig:        storeConfig,
+		messageStore:       messageStore,
+		shutdown:           make(chan struct{}),
+		transactionMap:     make(map[string]*TransactionRecord),
+		listeners:          make(map[string]TransactionListener),
+		persistenceManager: persistenceManager,
 	}
 }
 
@@ -97,6 +100,11 @@ func (ts *TransactionService) Start() error {
 
 	if ts.running {
 		return fmt.Errorf("transaction service is already running")
+	}
+
+	// 从持久化管理器加载事务状态
+	if ts.persistenceManager != nil {
+		ts.loadTransactionStatesFromPersistence()
 	}
 
 	// 启动事务回查定时器
@@ -161,8 +169,7 @@ func (ts *TransactionService) PrepareMessage(msg *common.Message, producerGroup 
 	}
 
 	// 记录事务信息
-	ts.transactionMutex.Lock()
-	ts.transactionMap[transactionId] = &TransactionRecord{
+	record := &TransactionRecord{
 		TransactionId: transactionId,
 		ProducerGroup: producerGroup,
 		ClientId:      msg.GetProperty(PROPERTY_UNIQUE_CLIENT_ID),
@@ -174,7 +181,13 @@ func (ts *TransactionService) PrepareMessage(msg *common.Message, producerGroup 
 		UpdateTime:    time.Now(),
 		CheckCount:    0,
 	}
+	
+	ts.transactionMutex.Lock()
+	ts.transactionMap[transactionId] = record
 	ts.transactionMutex.Unlock()
+	
+	// 保存到持久化管理器
+	ts.saveTransactionStateToPersistence(record)
 
 	log.Printf("Prepared transaction message: %s, transactionId: %s", result.MsgId, transactionId)
 	return result, nil
@@ -190,6 +203,8 @@ func (ts *TransactionService) CommitTransaction(transactionId string) error {
 	}
 	record.State = TransactionStateCommit
 	record.UpdateTime = time.Now()
+	// 保存状态更新到持久化管理器
+	ts.saveTransactionStateToPersistence(record)
 	ts.transactionMutex.Unlock()
 
 	// 获取半消息
@@ -208,6 +223,9 @@ func (ts *TransactionService) CommitTransaction(transactionId string) error {
 		log.Printf("Failed to record transaction op: %v", err)
 	}
 
+	// 事务完成后从持久化管理器中移除
+	ts.removeTransactionStateFromPersistence(transactionId)
+
 	log.Printf("Committed transaction: %s", transactionId)
 	return nil
 }
@@ -222,12 +240,17 @@ func (ts *TransactionService) RollbackTransaction(transactionId string) error {
 	}
 	record.State = TransactionStateRollback
 	record.UpdateTime = time.Now()
+	// 保存状态更新到持久化管理器
+	ts.saveTransactionStateToPersistence(record)
 	ts.transactionMutex.Unlock()
 
 	// 记录操作到OP Topic
 	if err := ts.recordTransactionOp(transactionId, TransactionStateRollback); err != nil {
 		log.Printf("Failed to record transaction op: %v", err)
 	}
+
+	// 事务完成后从持久化管理器中移除
+	ts.removeTransactionStateFromPersistence(transactionId)
 
 	log.Printf("Rolled back transaction: %s", transactionId)
 	return nil
@@ -253,20 +276,42 @@ func (ts *TransactionService) checkTransactions() {
 	now := time.Now()
 	checkTimeout := 60 * time.Second // 60秒超时
 	maxCheckCount := int32(15)       // 最大检查次数
+	transactionTimeout := 24 * time.Hour // 24小时事务超时
 
 	ts.transactionMutex.RLock()
 	var needCheckTransactions []*TransactionRecord
-	for _, record := range ts.transactionMap {
-		if record.State == TransactionStateUnknown &&
-			now.Sub(record.UpdateTime) > checkTimeout &&
-			record.CheckCount < maxCheckCount {
-			needCheckTransactions = append(needCheckTransactions, record)
+	var expiredTransactions []string
+	
+	for transactionId, record := range ts.transactionMap {
+		if record.State == TransactionStateUnknown {
+			// 检查是否超过最大生存时间，如果是则强制回滚
+			if now.Sub(record.CreateTime) > transactionTimeout {
+				expiredTransactions = append(expiredTransactions, transactionId)
+				log.Printf("Transaction %s expired after %v, will be rolled back", transactionId, transactionTimeout)
+			} else if now.Sub(record.UpdateTime) > checkTimeout && record.CheckCount < maxCheckCount {
+				// 需要检查的事务
+				needCheckTransactions = append(needCheckTransactions, record)
+			} else if record.CheckCount >= maxCheckCount {
+				// 超过最大检查次数，强制回滚
+				expiredTransactions = append(expiredTransactions, transactionId)
+				log.Printf("Transaction %s exceeded max check count %d, will be rolled back", transactionId, maxCheckCount)
+			}
 		}
 	}
 	ts.transactionMutex.RUnlock()
 
+	// 处理需要检查的事务
 	for _, record := range needCheckTransactions {
 		go ts.checkTransaction(record)
+	}
+	
+	// 处理过期事务（强制回滚）
+	for _, transactionId := range expiredTransactions {
+		go func(txId string) {
+			if err := ts.RollbackTransaction(txId); err != nil {
+				log.Printf("Failed to rollback expired transaction %s: %v", txId, err)
+			}
+		}(transactionId)
 	}
 }
 
@@ -296,6 +341,8 @@ func (ts *TransactionService) checkTransaction(record *TransactionRecord) {
 	ts.transactionMutex.Lock()
 	record.CheckCount++
 	record.UpdateTime = time.Now()
+	// 保存检查次数更新到持久化管理器
+	ts.saveTransactionStateToPersistence(record)
 	ts.transactionMutex.Unlock()
 
 	// 根据检查结果处理事务
@@ -540,4 +587,79 @@ func GetTransactionId(msg interface{}) string {
 	default:
 		return ""
 	}
+}
+
+// loadTransactionStatesFromPersistence 从持久化管理器加载事务状态
+func (ts *TransactionService) loadTransactionStatesFromPersistence() {
+	if ts.persistenceManager == nil {
+		log.Printf("PersistenceManager is nil, cannot load transaction states")
+		return
+	}
+	
+	allStates := ts.persistenceManager.GetAllTransactionStates()
+	log.Printf("Retrieved %d transaction states from persistence manager", len(allStates))
+	ts.transactionMutex.Lock()
+	defer ts.transactionMutex.Unlock()
+	
+	loadedCount := 0
+	
+	for transactionId, persistentState := range allStates {
+		log.Printf("Processing transaction %s with state %v", transactionId, persistentState.State)
+		// 只加载未完成的事务（UNKNOWN状态）
+		if persistentState.State == TransactionStateUnknown {
+			record := &TransactionRecord{
+				TransactionId: persistentState.TransactionId,
+				ProducerGroup: persistentState.ProducerGroup,
+				ClientId:      "", // 客户端ID在重启后可能不同
+				MsgId:         "", // 消息ID需要从消息中获取
+				RealTopic:     persistentState.Message.Topic,
+				RealQueueId:   0,
+				State:         persistentState.State,
+				CreateTime:    time.Unix(persistentState.CreateTime, 0),
+				UpdateTime:    time.Unix(persistentState.UpdateTime, 0),
+				CheckCount:    0, // 重置检查次数
+			}
+			
+			ts.transactionMap[transactionId] = record
+			loadedCount++
+			log.Printf("Loaded transaction %s into memory", transactionId)
+		} else {
+			log.Printf("Skipping transaction %s with state %v (not UNKNOWN)", transactionId, persistentState.State)
+		}
+	}
+	
+	log.Printf("Loaded %d transaction states from persistence", loadedCount)
+}
+
+// saveTransactionStateToPersistence 保存事务状态到持久化管理器
+func (ts *TransactionService) saveTransactionStateToPersistence(record *TransactionRecord) {
+	if ts.persistenceManager == nil {
+		return
+	}
+	
+	persistentState := &PersistentTransactionState{
+		TransactionId: record.TransactionId,
+		ProducerGroup: record.ProducerGroup,
+		State:         record.State,
+		CreateTime:    record.CreateTime.Unix(),
+		UpdateTime:    record.UpdateTime.Unix(),
+		Message: &common.Message{
+			Topic: record.RealTopic,
+			Properties: map[string]string{
+				PROPERTY_TRANSACTION_ID: record.TransactionId,
+				PROPERTY_PRODUCER_GROUP: record.ProducerGroup,
+			},
+		},
+	}
+	
+	ts.persistenceManager.UpdateTransactionState(record.TransactionId, persistentState)
+}
+
+// removeTransactionStateFromPersistence 从持久化管理器移除事务状态
+func (ts *TransactionService) removeTransactionStateFromPersistence(transactionId string) {
+	if ts.persistenceManager == nil {
+		return
+	}
+	
+	ts.persistenceManager.RemoveTransactionState(transactionId)
 }

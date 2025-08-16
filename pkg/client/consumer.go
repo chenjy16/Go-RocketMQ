@@ -1405,12 +1405,103 @@ func (c *Consumer) sendToDLQ(msg *MessageExt) error {
 	dlqMsg.Properties["ORIGIN_TOPIC"] = msg.Topic
 	dlqMsg.Properties["ORIGIN_MSG_ID"] = msg.MsgId
 	dlqMsg.Properties["RETRY_TIMES"] = fmt.Sprintf("%d", msg.ReconsumeTimes)
+	dlqMsg.Properties["DLQ_ORIGIN_QUEUE_ID"] = fmt.Sprintf("%d", msg.QueueId)
+	dlqMsg.Properties["DLQ_ORIGIN_BROKER"] = msg.StoreHost
 	
 	log.Printf("Sending message %s to DLQ topic %s after %d retries", msg.MsgId, dlqTopic, msg.ReconsumeTimes)
 	
-	// 这里简化实现，实际应该发送到Broker
-	// TODO: 实现真实的DLQ发送逻辑
+	// 实现真实的DLQ发送逻辑
+	return c.sendMessageToBroker(dlqMsg, dlqTopic)
+}
+
+// sendMessageToBroker 发送消息到Broker
+func (c *Consumer) sendMessageToBroker(msg *Message, topic string) error {
+	// 获取Topic路由信息
+	routeData, err := c.getTopicRouteFromNameServer(topic)
+	if err != nil {
+		return fmt.Errorf("failed to get route for topic %s: %v", topic, err)
+	}
+	
+	// 选择消息队列
+	mq := c.selectMessageQueue(routeData, topic)
+	if mq == nil {
+		return fmt.Errorf("no available message queue for topic %s", topic)
+	}
+	
+	// 获取Broker地址
+	brokerAddr, err := c.getBrokerAddr(mq.BrokerName)
+	if err != nil {
+		return fmt.Errorf("failed to get broker address for %s: %v", mq.BrokerName, err)
+	}
+	
+	// 构建发送请求
+	request := &RemotingCommand{
+		Code:      10, // SEND_MESSAGE
+		Language:  "JAVA",
+		Version:   VERSION,
+		Opaque:    atomic.AddInt32(&requestId, 1),
+		Flag:      0,
+		ExtFields: make(map[string]string),
+		Body:      msg.Body,
+	}
+	
+	// 设置扩展字段
+	request.ExtFields["topic"] = msg.Topic
+	request.ExtFields["queueId"] = fmt.Sprintf("%d", mq.QueueId)
+	request.ExtFields["sysFlag"] = "0"
+	request.ExtFields["bornTimestamp"] = fmt.Sprintf("%d", time.Now().UnixMilli())
+	request.ExtFields["flag"] = "0"
+	request.ExtFields["properties"] = c.encodeProperties(msg.Properties)
+	
+	// 添加ACL认证头
+	if c.aclMiddleware != nil {
+		authHeaders, err := c.aclMiddleware.GenerateAuthHeaders(msg.Topic, c.config.GroupName, "")
+		if err != nil {
+			return fmt.Errorf("failed to generate ACL auth headers: %v", err)
+		}
+		for k, v := range authHeaders {
+			request.ExtFields[k] = v
+		}
+	}
+	
+	// 发送请求到Broker
+	conn, err := c.connectionPool.GetConnection(brokerAddr)
+	if err != nil {
+		return fmt.Errorf("failed to get connection to broker %s: %v", brokerAddr, err)
+	}
+	defer c.connectionPool.ReleaseConnection(brokerAddr, conn)
+	
+	// 发送请求
+	if err := c.sendRequest(conn, request); err != nil {
+		return fmt.Errorf("failed to send request to broker: %v", err)
+	}
+	
+	// 接收响应
+	response, err := c.receiveResponse(conn)
+	if err != nil {
+		return fmt.Errorf("failed to receive response from broker: %v", err)
+	}
+	
+	// 检查响应状态
+	if response.Code != 0 {
+		return fmt.Errorf("broker returned error code %d: %s", response.Code, response.Remark)
+	}
+	
+	log.Printf("Successfully sent message to DLQ topic %s", topic)
 	return nil
+}
+
+// encodeProperties 编码消息属性
+func (c *Consumer) encodeProperties(properties map[string]string) string {
+	if len(properties) == 0 {
+		return ""
+	}
+	
+	var parts []string
+	for k, v := range properties {
+		parts = append(parts, fmt.Sprintf("%s%c%s", k, 1, v))
+	}
+	return strings.Join(parts, string(rune(2)))
 }
 
 // redeliverMessage 重新投递消息
