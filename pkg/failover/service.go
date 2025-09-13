@@ -3,6 +3,7 @@ package failover
 import (
 	"fmt"
 	"log"
+	"sort"
 	"sync"
 	"time"
 
@@ -20,22 +21,22 @@ type FailoverService struct {
 	failoverHistory  []*FailoverEvent
 
 	// 配置
-	checkInterval    time.Duration
-	failoverTimeout  time.Duration
-	recoveryTimeout  time.Duration
-	maxRetryCount    int
+	checkInterval   time.Duration
+	failoverTimeout time.Duration
+	recoveryTimeout time.Duration
+	maxRetryCount   int
 }
 
 // FailoverPolicy 故障转移策略
 type FailoverPolicy struct {
-	BrokerName       string                 `json:"brokerName"`
-	FailoverType     FailoverType          `json:"failoverType"`
-	BackupBrokers    []string              `json:"backupBrokers"`
-	AutoFailover     bool                  `json:"autoFailover"`
-	FailoverDelay    time.Duration         `json:"failoverDelay"`
-	HealthThreshold  int                   `json:"healthThreshold"`
-	RecoveryPolicy   RecoveryPolicy        `json:"recoveryPolicy"`
-	Notifications    []NotificationConfig  `json:"notifications"`
+	BrokerName      string               `json:"brokerName"`
+	FailoverType    FailoverType         `json:"failoverType"`
+	BackupBrokers   []string             `json:"backupBrokers"`
+	AutoFailover    bool                 `json:"autoFailover"`
+	FailoverDelay   time.Duration        `json:"failoverDelay"`
+	HealthThreshold int                  `json:"healthThreshold"`
+	RecoveryPolicy  RecoveryPolicy       `json:"recoveryPolicy"`
+	Notifications   []NotificationConfig `json:"notifications"`
 }
 
 // FailoverType 故障转移类型
@@ -71,16 +72,16 @@ type NotificationConfig struct {
 
 // FailoverEvent 故障转移事件
 type FailoverEvent struct {
-	EventId        string        `json:"eventId"`
-	BrokerName     string        `json:"brokerName"`
-	EventType      EventType     `json:"eventType"`
-	Timestamp      int64         `json:"timestamp"`
-	Reason         string        `json:"reason"`
-	SourceBroker   string        `json:"sourceBroker"`
-	TargetBroker   string        `json:"targetBroker"`
-	Status         EventStatus   `json:"status"`
-	Duration       time.Duration `json:"duration"`
-	ErrorMessage   string        `json:"errorMessage,omitempty"`
+	EventId      string        `json:"eventId"`
+	BrokerName   string        `json:"brokerName"`
+	EventType    EventType     `json:"eventType"`
+	Timestamp    int64         `json:"timestamp"`
+	Reason       string        `json:"reason"`
+	SourceBroker string        `json:"sourceBroker"`
+	TargetBroker string        `json:"targetBroker"`
+	Status       EventStatus   `json:"status"`
+	Duration     time.Duration `json:"duration"`
+	ErrorMessage string        `json:"errorMessage,omitempty"`
 }
 
 // EventType 事件类型
@@ -393,12 +394,12 @@ func (fs *FailoverService) waitForSlaveSync(slaveBroker string) error {
 	for _, task := range syncTasks {
 		if task.SlaveBroker == slaveBroker && task.Status == SYNC_RUNNING {
 			log.Printf("Found active sync task %s for slave %s, waiting for completion", task.TaskId, slaveBroker)
-			
+
 			// 等待同步完成，最多等待30秒
 			timeout := time.After(30 * time.Second)
 			ticker := time.NewTicker(1 * time.Second)
 			defer ticker.Stop()
-			
+
 			for {
 				select {
 				case <-timeout:
@@ -429,7 +430,7 @@ func (fs *FailoverService) waitForSlaveSync(slaveBroker string) error {
 // promoteSlaveToMaster 将从节点提升为主节点
 func (fs *FailoverService) promoteSlaveToMaster(slaveBroker string) error {
 	log.Printf("Promoting slave to master: %s", slaveBroker)
-	
+
 	// 更新Broker角色
 	broker, exists := fs.clusterManager.GetBroker(slaveBroker)
 	if !exists {
@@ -484,7 +485,7 @@ func (fs *FailoverService) checkBrokerRecovery(brokerName string) {
 	// 检查是否需要恢复
 	if broker.Status == cluster.ONLINE && policy.RecoveryPolicy == AUTO_RECOVERY {
 		// 检查是否有故障转移事件需要恢复
-	if fs.hasActiveFailover(brokerName) {
+		if fs.hasActiveFailover(brokerName) {
 			log.Printf("Detected broker %s is back online, triggering recovery", brokerName)
 			go fs.triggerRecovery(brokerName, "Broker back online")
 		}
@@ -499,14 +500,14 @@ func (fs *FailoverService) hasActiveFailover(brokerName string) bool {
 	// 检查最近的故障转移事件
 	for i := len(fs.failoverHistory) - 1; i >= 0; i-- {
 		event := fs.failoverHistory[i]
-		if event.BrokerName == brokerName && 
-		   event.EventType == FAILOVER_COMPLETE && 
-		   event.Status == SUCCESS {
+		if event.BrokerName == brokerName &&
+			event.EventType == FAILOVER_COMPLETE &&
+			event.Status == SUCCESS {
 			// 检查是否已经恢复
 			for j := i + 1; j < len(fs.failoverHistory); j++ {
 				recoveryEvent := fs.failoverHistory[j]
-				if recoveryEvent.BrokerName == brokerName && 
-				   recoveryEvent.EventType == RECOVERY_COMPLETE {
+				if recoveryEvent.BrokerName == brokerName &&
+					recoveryEvent.EventType == RECOVERY_COMPLETE {
 					return false // 已经恢复过了
 				}
 			}
@@ -588,27 +589,27 @@ func (fs *FailoverService) verifyBrokerHealth(brokerName string) error {
 // restoreRouteInfo 恢复路由信息
 func (fs *FailoverService) restoreRouteInfo(brokerName string) error {
 	log.Printf("Restoring route info for broker: %s", brokerName)
-	
+
 	// 获取故障转移策略
 	fs.mutex.RLock()
 	policy, exists := fs.failoverPolicies[brokerName]
 	fs.mutex.RUnlock()
-	
+
 	if !exists {
 		return fmt.Errorf("no failover policy found for broker: %s", brokerName)
 	}
-	
+
 	// 检查是否有可用的备份Broker
 	if len(policy.BackupBrokers) == 0 {
 		return fmt.Errorf("no backup brokers available for %s", brokerName)
 	}
-	
+
 	// 选择一个健康的备份Broker作为新的主Broker
 	newMasterBroker, err := fs.selectBackupBroker(policy.BackupBrokers)
 	if err != nil {
 		return fmt.Errorf("failed to select healthy backup broker: %v", err)
 	}
-	
+
 	// 通过集群管理器更新路由信息
 	if fs.clusterManager != nil {
 		// 获取原Broker信息
@@ -630,7 +631,7 @@ func (fs *FailoverService) restoreRouteInfo(brokerName string) error {
 				Metrics:        originalBroker.Metrics,
 				Topics:         originalBroker.Topics,
 			}
-			
+
 			// 重新注册Broker信息
 			err = fs.clusterManager.RegisterBroker(newBrokerInfo)
 			if err != nil {
@@ -638,7 +639,7 @@ func (fs *FailoverService) restoreRouteInfo(brokerName string) error {
 			}
 		}
 	}
-	
+
 	log.Printf("Route info restored for broker %s, new master: %s", brokerName, newMasterBroker)
 	return nil
 }
@@ -646,40 +647,40 @@ func (fs *FailoverService) restoreRouteInfo(brokerName string) error {
 // notifyClientsRecovery 通知客户端恢复
 func (fs *FailoverService) notifyClientsRecovery(brokerName string) error {
 	log.Printf("Notifying clients of recovery for broker: %s", brokerName)
-	
+
 	// 获取故障转移策略
 	fs.mutex.RLock()
 	policy, exists := fs.failoverPolicies[brokerName]
 	fs.mutex.RUnlock()
-	
+
 	if !exists {
 		return fmt.Errorf("no failover policy found for broker: %s", brokerName)
 	}
-	
+
 	// 选择新的主Broker
 	newMasterBroker, err := fs.selectBackupBroker(policy.BackupBrokers)
 	if err != nil {
 		return fmt.Errorf("failed to select healthy backup broker: %v", err)
 	}
-	
+
 	// 通过集群管理器通知所有连接的客户端
 	if fs.clusterManager != nil {
 		// 获取所有在线Broker，作为通知目标
 		onlineBrokers := fs.clusterManager.GetOnlineBrokers()
-		
+
 		// 构建路由变更通知消息
 		notification := map[string]interface{}{
-			"type":           "ROUTE_CHANGE",
-			"brokerName":     brokerName,
-			"newMasterAddr":  newMasterBroker,
-			"timestamp":      time.Now().Unix(),
-			"reason":         "BROKER_RECOVERY",
+			"type":          "ROUTE_CHANGE",
+			"brokerName":    brokerName,
+			"newMasterAddr": newMasterBroker,
+			"timestamp":     time.Now().Unix(),
+			"reason":        "BROKER_RECOVERY",
 		}
-		
+
 		// 向所有在线Broker发送通知（它们会转发给连接的客户端）
 		successCount := 0
 		failureCount := 0
-		
+
 		for _, broker := range onlineBrokers {
 			if broker.BrokerName != brokerName { // 不向自己发送通知
 				err := fs.sendBrokerNotification(broker, notification)
@@ -691,29 +692,29 @@ func (fs *FailoverService) notifyClientsRecovery(brokerName string) error {
 				}
 			}
 		}
-		
+
 		log.Printf("Broker notification completed: %d success, %d failures", successCount, failureCount)
-		
+
 		// 如果有Broker通知失败，记录警告但不返回错误
 		if failureCount > 0 {
 			log.Printf("Warning: %d brokers failed to receive recovery notification for broker %s", failureCount, brokerName)
 		}
 	}
-	
+
 	// 记录恢复事件
 	recoveryEvent := &FailoverEvent{
-		EventId:        fmt.Sprintf("recovery_%s_%d", brokerName, time.Now().Unix()),
-		BrokerName:     brokerName,
-		EventType:      RECOVERY_COMPLETE,
-		Timestamp:      time.Now().Unix(),
-		Reason:         "Broker recovery completed",
-		SourceBroker:   brokerName,
-		TargetBroker:   newMasterBroker,
-		Status:         SUCCESS,
-		Duration:       0,
+		EventId:      fmt.Sprintf("recovery_%s_%d", brokerName, time.Now().Unix()),
+		BrokerName:   brokerName,
+		EventType:    RECOVERY_COMPLETE,
+		Timestamp:    time.Now().Unix(),
+		Reason:       "Broker recovery completed",
+		SourceBroker: brokerName,
+		TargetBroker: newMasterBroker,
+		Status:       SUCCESS,
+		Duration:     0,
 	}
 	fs.addFailoverEvent(recoveryEvent)
-	
+
 	log.Printf("Recovery notification sent to clients for broker: %s", brokerName)
 	return nil
 }
@@ -735,9 +736,9 @@ func (fs *FailoverService) sendNotifications(policy *FailoverPolicy, event *Fail
 
 // sendNotification 发送单个通知
 func (fs *FailoverService) sendNotification(config NotificationConfig, event *FailoverEvent) error {
-	log.Printf("Sending %s notification to %s for event %s", 
+	log.Printf("Sending %s notification to %s for event %s",
 		config.Type, config.Endpoint, event.EventId)
-	
+
 	// 这里应该实现具体的通知逻辑（邮件、webhook、短信等）
 	return nil
 }
@@ -760,13 +761,21 @@ func (fs *FailoverService) GetFailoverHistory(limit int) []*FailoverEvent {
 	fs.mutex.RLock()
 	defer fs.mutex.RUnlock()
 
-	if limit <= 0 || limit > len(fs.failoverHistory) {
-		limit = len(fs.failoverHistory)
+	// 创建副本以避免修改原始数据
+	history := make([]*FailoverEvent, len(fs.failoverHistory))
+	copy(history, fs.failoverHistory)
+
+	// 按时间戳降序排序（最新的在前）
+	sort.Slice(history, func(i, j int) bool {
+		return history[i].Timestamp > history[j].Timestamp
+	})
+
+	if limit <= 0 || limit > len(history) {
+		limit = len(history)
 	}
 
 	result := make([]*FailoverEvent, limit)
-	startIndex := len(fs.failoverHistory) - limit
-	copy(result, fs.failoverHistory[startIndex:])
+	copy(result, history[:limit])
 
 	return result
 }

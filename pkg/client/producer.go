@@ -1,25 +1,25 @@
 package client
 
 import (
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net"
 	"strconv"
 	"sync"
 	"time"
+
+	"go-rocketmq/pkg/protocol"
+	"go-rocketmq/pkg/remoting"
 )
 
 // Producer 消息生产者
 type Producer struct {
-	config       *ProducerConfig
-	nameServers  []string
-	started      bool
-	shutdown     chan struct{}
-	mutex        sync.RWMutex
-	routeTable   map[string]*TopicRouteData
-	routeMutex   sync.RWMutex
+	config      *ProducerConfig
+	nameServers []string
+	started     bool
+	shutdown    chan struct{}
+	mutex       sync.RWMutex
+	routeTable  map[string]*TopicRouteData
+	routeMutex  sync.RWMutex
 	// 延时消息调度器
 	delayScheduler *DelayMessageScheduler
 	// 批量消息处理器
@@ -27,20 +27,17 @@ type Producer struct {
 	// 消息追踪管理器
 	traceManager *TraceManager
 	// ACL中间件
-	aclMiddleware *ACLMiddleware
-	// TODO: 添加remoting组件
-	// remotingClient *remoting.RemotingClient
-	// routeManager   *remoting.RouteManager
-	// heartbeatManager *remoting.HeartbeatManager
+	aclMiddleware  *ACLMiddleware
+	remotingClient *remoting.RemotingClient
 }
 
 // DelayMessageScheduler 延时消息调度器
 type DelayMessageScheduler struct {
-	producer     *Producer
-	delayQueue   chan *DelayMessageTask
-	running      bool
-	mutex        sync.RWMutex
-	stopChan     chan struct{}
+	producer   *Producer
+	delayQueue chan *DelayMessageTask
+	running    bool
+	mutex      sync.RWMutex
+	stopChan   chan struct{}
 }
 
 // DelayMessageTask 延时消息任务
@@ -64,11 +61,11 @@ func NewDelayMessageScheduler(producer *Producer) *DelayMessageScheduler {
 func (dms *DelayMessageScheduler) Start() {
 	dms.mutex.Lock()
 	defer dms.mutex.Unlock()
-	
+
 	if dms.running {
 		return
 	}
-	
+
 	dms.running = true
 	go dms.scheduleLoop()
 }
@@ -77,11 +74,11 @@ func (dms *DelayMessageScheduler) Start() {
 func (dms *DelayMessageScheduler) Stop() {
 	dms.mutex.Lock()
 	defer dms.mutex.Unlock()
-	
+
 	if !dms.running {
 		return
 	}
-	
+
 	dms.running = false
 	close(dms.stopChan)
 }
@@ -93,7 +90,7 @@ func (dms *DelayMessageScheduler) ScheduleDelayMessage(msg *Message, deliverTime
 		DeliverTime: deliverTime,
 		Callback:    callback,
 	}
-	
+
 	select {
 	case dms.delayQueue <- task:
 		return nil
@@ -106,9 +103,9 @@ func (dms *DelayMessageScheduler) ScheduleDelayMessage(msg *Message, deliverTime
 func (dms *DelayMessageScheduler) scheduleLoop() {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
-	
+
 	var pendingTasks []*DelayMessageTask
-	
+
 	for {
 		select {
 		case <-dms.stopChan:
@@ -118,7 +115,7 @@ func (dms *DelayMessageScheduler) scheduleLoop() {
 		case <-ticker.C:
 			now := time.Now()
 			var remainingTasks []*DelayMessageTask
-			
+
 			for _, task := range pendingTasks {
 				if now.After(task.DeliverTime) || now.Equal(task.DeliverTime) {
 					// 时间到了，发送消息
@@ -128,7 +125,7 @@ func (dms *DelayMessageScheduler) scheduleLoop() {
 					remainingTasks = append(remainingTasks, task)
 				}
 			}
-			
+
 			pendingTasks = remainingTasks
 		}
 	}
@@ -166,7 +163,7 @@ func NewBatchMessageProcessor(producer *Producer) *BatchMessageProcessor {
 		batchQueue:   make(chan *BatchMessageTask, 1000),
 		running:      false,
 		stopChan:     make(chan struct{}),
-		batchSize:    32,  // 默认批量大小
+		batchSize:    32,                    // 默认批量大小
 		batchTimeout: 10 * time.Millisecond, // 默认批量超时
 	}
 }
@@ -175,11 +172,11 @@ func NewBatchMessageProcessor(producer *Producer) *BatchMessageProcessor {
 func (bmp *BatchMessageProcessor) Start() {
 	bmp.mutex.Lock()
 	defer bmp.mutex.Unlock()
-	
+
 	if bmp.running {
 		return
 	}
-	
+
 	bmp.running = true
 	go bmp.batchProcessLoop()
 }
@@ -188,11 +185,11 @@ func (bmp *BatchMessageProcessor) Start() {
 func (bmp *BatchMessageProcessor) Stop() {
 	bmp.mutex.Lock()
 	defer bmp.mutex.Unlock()
-	
+
 	if !bmp.running {
 		return
 	}
-	
+
 	bmp.running = false
 	close(bmp.stopChan)
 }
@@ -203,7 +200,7 @@ func (bmp *BatchMessageProcessor) AddBatchTask(messages []*Message, callback fun
 		Messages: messages,
 		Callback: callback,
 	}
-	
+
 	select {
 	case bmp.batchQueue <- task:
 		return nil
@@ -230,9 +227,9 @@ func (bmp *BatchMessageProcessor) SetBatchTimeout(timeout time.Duration) {
 func (bmp *BatchMessageProcessor) batchProcessLoop() {
 	ticker := time.NewTicker(bmp.batchTimeout)
 	defer ticker.Stop()
-	
+
 	var pendingTasks []*BatchMessageTask
-	
+
 	for {
 		select {
 		case <-bmp.stopChan:
@@ -243,7 +240,7 @@ func (bmp *BatchMessageProcessor) batchProcessLoop() {
 			return
 		case task := <-bmp.batchQueue:
 			pendingTasks = append(pendingTasks, task)
-			
+
 			// 检查是否达到批量大小
 			if len(pendingTasks) >= bmp.batchSize {
 				bmp.processBatchTasks(pendingTasks)
@@ -278,22 +275,22 @@ func (bmp *BatchMessageProcessor) sendBatchMessages(task *BatchMessageTask) {
 
 // ProducerConfig 生产者配置
 type ProducerConfig struct {
-	GroupName            string        `json:"groupName"`
-	NameServers          []string      `json:"nameServers"`
-	SendMsgTimeout       time.Duration `json:"sendMsgTimeout"`
-	CompressMsgBodyOver  int32         `json:"compressMsgBodyOver"`
-	RetryTimesWhenSendFailed int32     `json:"retryTimesWhenSendFailed"`
-	RetryTimesWhenSendAsyncFailed int32 `json:"retryTimesWhenSendAsyncFailed"`
-	RetryAnotherBrokerWhenNotStoreOK bool `json:"retryAnotherBrokerWhenNotStoreOK"`
-	MaxMessageSize       int32         `json:"maxMessageSize"`
+	GroupName                        string        `json:"groupName"`
+	NameServers                      []string      `json:"nameServers"`
+	SendMsgTimeout                   time.Duration `json:"sendMsgTimeout"`
+	CompressMsgBodyOver              int32         `json:"compressMsgBodyOver"`
+	RetryTimesWhenSendFailed         int32         `json:"retryTimesWhenSendFailed"`
+	RetryTimesWhenSendAsyncFailed    int32         `json:"retryTimesWhenSendAsyncFailed"`
+	RetryAnotherBrokerWhenNotStoreOK bool          `json:"retryAnotherBrokerWhenNotStoreOK"`
+	MaxMessageSize                   int32         `json:"maxMessageSize"`
 	// ACL 配置字段
-	AccessKey            string        `json:"accessKey"`            // ACL访问密钥
-	SecretKey            string        `json:"secretKey"`            // ACL秘密密钥
-	SecurityToken        string        `json:"securityToken"`        // ACL安全令牌
-	SignatureMethod      string        `json:"signatureMethod"`      // 签名算法，默认HmacSHA1
-	EnableACL            bool          `json:"enableACL"`            // 是否启用ACL认证
-	ACLConfigPath        string        `json:"aclConfigPath"`        // ACL配置文件路径
-	ACLHotReload         bool          `json:"aclHotReload"`         // 是否启用ACL配置热重载
+	AccessKey       string `json:"accessKey"`       // ACL访问密钥
+	SecretKey       string `json:"secretKey"`       // ACL秘密密钥
+	SecurityToken   string `json:"securityToken"`   // ACL安全令牌
+	SignatureMethod string `json:"signatureMethod"` // 签名算法，默认HmacSHA1
+	EnableACL       bool   `json:"enableACL"`       // 是否启用ACL认证
+	ACLConfigPath   string `json:"aclConfigPath"`   // ACL配置文件路径
+	ACLHotReload    bool   `json:"aclHotReload"`    // 是否启用ACL配置热重载
 }
 
 // NewProducer 创建新的生产者
@@ -309,24 +306,25 @@ func NewProducer(groupName string) *Producer {
 	}
 
 	p := &Producer{
-		config:      config,
-		shutdown:    make(chan struct{}),
-		routeTable:  make(map[string]*TopicRouteData),
+		config:         config,
+		shutdown:       make(chan struct{}),
+		routeTable:     make(map[string]*TopicRouteData),
+		remotingClient: remoting.NewRemotingClient(),
 	}
-	
+
 	// 初始化延时消息调度器
 	p.delayScheduler = NewDelayMessageScheduler(p)
-	
+
 	// 初始化批量消息处理器
 	p.batchProcessor = NewBatchMessageProcessor(p)
-	
+
 	// 初始化消息追踪管理器（默认不启用）
 	p.traceManager = NewTraceManager(nil)
 	p.traceManager.SetEnabled(false)
-	
+
 	// 初始化ACL中间件（默认不启用）
 	p.aclMiddleware = NewACLMiddleware("", "", HmacSHA1, false)
-	
+
 	return p
 }
 
@@ -351,13 +349,13 @@ func (p *Producer) Start() error {
 
 	// 启动路由更新任务
 	go p.updateTopicRouteInfoFromNameServer()
-	
+
 	// 启动延时消息调度器
 	p.delayScheduler.Start()
-	
+
 	// 启动批量消息处理器
 	p.batchProcessor.Start()
-	
+
 	// 启动消息追踪管理器
 	if p.traceManager != nil {
 		p.traceManager.Start()
@@ -369,6 +367,7 @@ func (p *Producer) Start() error {
 	}
 
 	p.started = true
+	return nil
 	return nil
 }
 
@@ -383,13 +382,18 @@ func (p *Producer) Shutdown() {
 
 	// 停止延时消息调度器
 	p.delayScheduler.Stop()
-	
+
 	// 停止批量消息处理器
 	p.batchProcessor.Stop()
-	
+
 	// 停止消息追踪管理器
 	if p.traceManager != nil {
 		p.traceManager.Stop()
+	}
+
+	// 关闭remoting客户端
+	if p.remotingClient != nil {
+		p.remotingClient.Close()
 	}
 
 	close(p.shutdown)
@@ -505,19 +509,19 @@ func (p *Producer) SendDelayMessageAsync(msg *Message, delayLevel int32, callbac
 	if !p.started {
 		return fmt.Errorf("producer not started")
 	}
-	
+
 	if delayLevel < 1 || delayLevel > 18 {
 		return fmt.Errorf("invalid delay level: %d, should be 1-18", delayLevel)
 	}
-	
+
 	// 计算延时时间
 	delayDuration := p.getDelayDuration(delayLevel)
 	deliverTime := time.Now().Add(delayDuration)
-	
+
 	// 设置延时级别
 	msg.SetDelayTimeLevel(delayLevel)
 	msg.SetProperty("DELAY_MESSAGE", "true")
-	
+
 	// 调度延时消息
 	return p.delayScheduler.ScheduleDelayMessage(msg, deliverTime, callback)
 }
@@ -527,15 +531,15 @@ func (p *Producer) SendScheduledMessageAsync(msg *Message, deliverTime time.Time
 	if !p.started {
 		return fmt.Errorf("producer not started")
 	}
-	
+
 	if deliverTime.Before(time.Now()) {
 		return fmt.Errorf("deliver time should be in the future")
 	}
-	
+
 	// 设置开始投递时间
 	msg.SetStartDeliverTime(deliverTime.UnixMilli())
 	msg.SetProperty("SCHEDULED_MESSAGE", "true")
-	
+
 	// 调度延时消息
 	return p.delayScheduler.ScheduleDelayMessage(msg, deliverTime, callback)
 }
@@ -589,11 +593,11 @@ func (p *Producer) SendBatchMessagesAsync(messages []*Message, callback func(*Se
 	if !p.started {
 		return fmt.Errorf("producer not started")
 	}
-	
+
 	if len(messages) == 0 {
 		return fmt.Errorf("messages list is empty")
 	}
-	
+
 	// 验证所有消息都属于同一个Topic
 	topic := messages[0].Topic
 	for _, msg := range messages {
@@ -601,7 +605,7 @@ func (p *Producer) SendBatchMessagesAsync(messages []*Message, callback func(*Se
 			return fmt.Errorf("all messages in batch must have the same topic")
 		}
 	}
-	
+
 	// 添加到批量处理器
 	return p.batchProcessor.AddBatchTask(messages, callback)
 }
@@ -631,25 +635,22 @@ func (p *Producer) selectMessageQueue(routeData *TopicRouteData, topic string) *
 
 	// 简单的轮询选择策略
 	queueData := routeData.QueueDatas[0]
-	
+
 	return &MessageQueue{
 		Topic:      topic,
 		BrokerName: queueData.BrokerName,
-		QueueId:    0,  // 简化选择第一个队列
+		QueueId:    0, // 简化选择第一个队列
 	}
 }
 
 // sendMessageToQueue 发送消息到指定队列
 func (p *Producer) sendMessageToQueue(msg *Message, mq *MessageQueue, timeout time.Duration) (*SendResult, error) {
-	// TODO: 使用remoting组件实现真实Broker交互
-	// 当前保持原有实现，待remoting组件集成完成后替换
-	
 	// 1. 根据MessageQueue找到Broker地址
 	routeData := p.getTopicRouteData(mq.Topic)
 	if routeData == nil {
 		return nil, fmt.Errorf("no route data for topic: %s", mq.Topic)
 	}
-	
+
 	var brokerAddr string
 	for _, brokerData := range routeData.BrokerDatas {
 		if brokerData.BrokerName == mq.BrokerName {
@@ -659,41 +660,29 @@ func (p *Producer) sendMessageToQueue(msg *Message, mq *MessageQueue, timeout ti
 			}
 		}
 	}
-	
+
 	if brokerAddr == "" {
 		return nil, fmt.Errorf("no broker address found for broker: %s", mq.BrokerName)
 	}
-	
-	// 2. 建立网络连接并发送消息
-	conn, err := net.DialTimeout("tcp", brokerAddr, timeout)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to broker %s: %v", brokerAddr, err)
-	}
-	defer conn.Close()
-	
-	// 设置连接超时
-	conn.SetDeadline(time.Now().Add(timeout))
-	
-	// 3. 构造发送请求
+
+	// 2. 构造发送请求
 	// 将Properties转换为字符串格式
 	var propertiesStr string
 	if msg.Properties != nil && len(msg.Properties) > 0 {
 		propData, _ := json.Marshal(msg.Properties)
 		propertiesStr = string(propData)
 	}
-	
-	// 创建请求头
-	header := &SendMessageRequestHeader{
-		ProducerGroup:   p.config.GroupName,
-		Topic:          msg.Topic,
-		QueueId:        mq.QueueId,
-		SysFlag:        0,
-		BornTimestamp:  time.Now().UnixMilli(),
-		Flag:           0,
-		Properties:     propertiesStr,
-		ReconsumeTimes: 0,
-		UnitMode:       false,
-		Batch:          false,
+
+	// 创建扩展字段
+	properties := make(map[string]string)
+	properties["PRODUCER_GROUP"] = p.config.GroupName
+	properties["TOPIC"] = msg.Topic
+	properties["QUEUE_ID"] = strconv.FormatInt(int64(mq.QueueId), 10)
+	properties["BORN_TIMESTAMP"] = strconv.FormatInt(time.Now().UnixNano()/int64(time.Millisecond), 10)
+
+	// 添加消息属性
+	if propertiesStr != "" {
+		properties["PROPERTIES"] = propertiesStr
 	}
 
 	// 添加ACL认证信息
@@ -702,76 +691,45 @@ func (p *Producer) sendMessageToQueue(msg *Message, mq *MessageQueue, timeout ti
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate ACL auth headers: %v", err)
 		}
-		
-		if accessKey, ok := authHeaders["AccessKey"]; ok {
-			header.AccessKey = accessKey
-		}
-		if signature, ok := authHeaders["Signature"]; ok {
-			header.Signature = signature
-		}
-		if timestamp, ok := authHeaders["Timestamp"]; ok {
-			if ts, err := strconv.ParseInt(timestamp, 10, 64); err == nil {
-				header.Timestamp = ts
-			}
-		}
-		if signatureMethod, ok := authHeaders["SignatureMethod"]; ok {
-			header.SignatureMethod = signatureMethod
-		}
-		if securityToken, ok := authHeaders["SecurityToken"]; ok {
-			header.SecurityToken = securityToken
+
+		for key, value := range authHeaders {
+			properties[key] = value
 		}
 	}
 
-	// 创建完整的请求，包含消息体
-	request := map[string]interface{}{
-		"header": header,
-		"body": string(msg.Body), // 将消息体作为字符串发送
-	}
-	
-	// 4. 序列化并发送请求
-	requestData, err := json.Marshal(request)
+	// 创建请求命令
+	request := protocol.CreateRemotingCommand(protocol.SendMessage)
+	request.ExtFields = properties
+	request.Body = msg.Body
+
+	// 3. 使用remoting客户端发送请求
+	response, err := p.remotingClient.SendSync(brokerAddr, request, int64(timeout/time.Millisecond))
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %v", err)
+		return nil, fmt.Errorf("failed to send message to broker %s: %v", brokerAddr, err)
 	}
-	
-	// 发送请求头（包含数据长度）
-	headerBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(headerBytes, uint32(len(requestData)))
-	
-	if _, err := conn.Write(headerBytes); err != nil {
-		return nil, fmt.Errorf("failed to write header: %v", err)
+
+	// 4. 检查响应状态
+	if response.Code != 0 { // 0表示成功
+		return nil, fmt.Errorf("broker returned error code %d: %s", response.Code, response.Remark)
 	}
-	
-	if _, err := conn.Write(requestData); err != nil {
-		return nil, fmt.Errorf("failed to write request: %v", err)
+
+	// 5. 解析响应
+	msgId := response.ExtFields["MSG_ID"]
+	queueOffsetStr := response.ExtFields["QUEUE_OFFSET"]
+
+	var queueOffset int64
+	if queueOffsetStr != "" {
+		queueOffset, _ = strconv.ParseInt(queueOffsetStr, 10, 64)
 	}
-	
-	// 5. 读取响应
-	responseHeader := make([]byte, 4)
-	if _, err := io.ReadFull(conn, responseHeader); err != nil {
-		return nil, fmt.Errorf("failed to read response header: %v", err)
-	}
-	
-	responseLength := binary.BigEndian.Uint32(responseHeader)
-	responseData := make([]byte, responseLength)
-	if _, err := io.ReadFull(conn, responseData); err != nil {
-		return nil, fmt.Errorf("failed to read response data: %v", err)
-	}
-	
-	// 6. 解析响应
-	var response SendMessageResponseHeader
-	if err := json.Unmarshal(responseData, &response); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %v", err)
-	}
-	
-	// 7. 构造发送结果
+
+	// 6. 构造发送结果
 	result := &SendResult{
 		SendStatus:   SendOK,
-		MsgId:        response.MsgId,
+		MsgId:        msgId,
 		MessageQueue: mq,
-		QueueOffset:  response.QueueOffset,
+		QueueOffset:  queueOffset,
 	}
-	
+
 	return result, nil
 }
 
@@ -779,7 +737,7 @@ func (p *Producer) sendMessageToQueue(msg *Message, mq *MessageQueue, timeout ti
 func (p *Producer) updateTopicRouteInfoFromNameServer() {
 	// 立即执行一次路由更新
 	p.updateRouteInfo()
-	
+
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
@@ -799,7 +757,7 @@ func (p *Producer) updateRouteInfo() {
 	// 在实际实现中，这里应该通过网络请求从NameServer获取
 	p.routeMutex.Lock()
 	defer p.routeMutex.Unlock()
-	
+
 	// 为TestTopic创建路由数据
 	testTopicRoute := &TopicRouteData{
 		QueueDatas: []*QueueData{
@@ -807,7 +765,7 @@ func (p *Producer) updateRouteInfo() {
 				BrokerName:     "DefaultBroker",
 				ReadQueueNums:  4,
 				WriteQueueNums: 4,
-				Perm:          6, // 读写权限
+				Perm:           6, // 读写权限
 
 			},
 		},
@@ -821,7 +779,7 @@ func (p *Producer) updateRouteInfo() {
 			},
 		},
 	}
-	
+
 	// 为OrderTopic创建路由数据
 	orderTopicRoute := &TopicRouteData{
 		QueueDatas: []*QueueData{
@@ -829,7 +787,7 @@ func (p *Producer) updateRouteInfo() {
 				BrokerName:     "DefaultBroker",
 				ReadQueueNums:  4,
 				WriteQueueNums: 4,
-				Perm:          6, // 读写权限
+				Perm:           6, // 读写权限
 
 			},
 		},
@@ -843,10 +801,10 @@ func (p *Producer) updateRouteInfo() {
 			},
 		},
 	}
-	
+
 	p.routeTable["TestTopic"] = testTopicRoute
 	p.routeTable["OrderTopic"] = orderTopicRoute
-	
+
 	// 为BenchmarkTopic创建路由数据
 	benchmarkTopicRoute := &TopicRouteData{
 		QueueDatas: []*QueueData{
@@ -854,7 +812,7 @@ func (p *Producer) updateRouteInfo() {
 				BrokerName:     "DefaultBroker",
 				ReadQueueNums:  4,
 				WriteQueueNums: 4,
-				Perm:          6, // 读写权限
+				Perm:           6, // 读写权限
 
 			},
 		},
@@ -868,7 +826,7 @@ func (p *Producer) updateRouteInfo() {
 			},
 		},
 	}
-	
+
 	p.routeTable["BenchmarkTopic"] = benchmarkTopicRoute
 }
 
@@ -943,12 +901,12 @@ func (p *Producer) initACLMiddleware() error {
 		if err := ValidateACLConfig(p.config.AccessKey, p.config.SecretKey); err != nil {
 			return err
 		}
-		
+
 		signatureMethod := ACLSignatureMethod(p.config.SignatureMethod)
 		if signatureMethod == "" {
 			signatureMethod = HmacSHA1
 		}
-		
+
 		p.aclMiddleware = NewACLMiddleware(p.config.AccessKey, p.config.SecretKey, signatureMethod, true)
 	}
 

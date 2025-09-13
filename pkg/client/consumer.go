@@ -3,12 +3,12 @@ package client
 import (
 	"encoding/json"
 	"fmt"
+	"go-rocketmq/pkg/protocol"
+	"go-rocketmq/pkg/remoting"
 	"log"
-	"net"
 	"os"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -20,70 +20,17 @@ const (
 // 全局变量
 var requestId int32
 
-// SimpleConnectionPool 简单连接池
-type SimpleConnectionPool struct {
-	connections map[string]net.Conn
-	mutex       sync.RWMutex
-	maxIdle     time.Duration
-}
-
-// GetConnection 获取连接
-func (pool *SimpleConnectionPool) GetConnection(addr string) (net.Conn, error) {
-	pool.mutex.Lock()
-	defer pool.mutex.Unlock()
-	
-	// 检查是否有可用连接
-	if conn, exists := pool.connections[addr]; exists {
-		// 简单检查连接是否有效
-		if conn != nil {
-			delete(pool.connections, addr)
-			return conn, nil
-		}
-	}
-	
-	// 创建新连接
-	return net.DialTimeout("tcp", addr, 5*time.Second)
-}
-
-// ReleaseConnection 释放连接
-func (pool *SimpleConnectionPool) ReleaseConnection(addr string, conn net.Conn) {
-	if conn == nil {
-		return
-	}
-	
-	pool.mutex.Lock()
-	defer pool.mutex.Unlock()
-	
-	// 简单实现：直接存储连接（实际应该检查连接状态和池大小）
-	pool.connections[addr] = conn
-}
-
-// Close 关闭连接池
-func (pool *SimpleConnectionPool) Close() {
-	pool.mutex.Lock()
-	defer pool.mutex.Unlock()
-	
-	for addr, conn := range pool.connections {
-		if conn != nil {
-			conn.Close()
-		}
-		delete(pool.connections, addr)
-	}
-}
-
-
-
 // Consumer 消费者客户端
 type Consumer struct {
-	config          *ConsumerConfig
-	nameServerAddrs []string
-	subscriptions   map[string]*Subscription
-	messageListener MessageListener
-	mutex           sync.RWMutex
-	started         bool
-	shutdown        chan struct{}
-	wg              sync.WaitGroup
-	rebalanceService *RebalanceService
+	config              *ConsumerConfig
+	nameServerAddrs     []string
+	subscriptions       map[string]*Subscription
+	messageListener     MessageListener
+	mutex               sync.RWMutex
+	started             bool
+	shutdown            chan struct{}
+	wg                  sync.WaitGroup
+	rebalanceService    *RebalanceService
 	loadBalanceStrategy LoadBalanceStrategy
 	// 消息追踪管理器
 	traceManager *TraceManager
@@ -94,40 +41,40 @@ type Consumer struct {
 	// 消费进度存储
 	consumeOffsets map[string]int64
 	offsetMutex    sync.RWMutex
-	// 连接池管理器
-	connectionPool *SimpleConnectionPool
+	// remoting客户端
+	remotingClient *remoting.RemotingClient
 	// 心跳管理
 	heartbeatTicker *time.Ticker
-	clientID       string
+	clientID        string
 }
 
 // ConsumerConfig 消费者配置
 type ConsumerConfig struct {
-	GroupName            string                      // 消费者组名
-	NameServerAddr       string                      // NameServer地址
-	ConsumeFromWhere     ConsumeFromWhere     // 消费起始位置
-	MessageModel         MessageModel         // 消息模式
-	ConsumeThreadMin     int                         // 最小消费线程数
-	ConsumeThreadMax     int                         // 最大消费线程数
-	PullInterval         time.Duration               // 拉取间隔
-	PullBatchSize        int32                       // 批量拉取大小
-	ConsumeTimeout       time.Duration               // 消费超时时间
+	GroupName        string           // 消费者组名
+	NameServerAddr   string           // NameServer地址
+	ConsumeFromWhere ConsumeFromWhere // 消费起始位置
+	MessageModel     MessageModel     // 消息模式
+	ConsumeThreadMin int              // 最小消费线程数
+	ConsumeThreadMax int              // 最大消费线程数
+	PullInterval     time.Duration    // 拉取间隔
+	PullBatchSize    int32            // 批量拉取大小
+	ConsumeTimeout   time.Duration    // 消费超时时间
 	// ACL 配置字段
-	AccessKey            string                      // ACL访问密钥
-	SecretKey            string                      // ACL秘密密钥
-	SecurityToken        string                      // ACL安全令牌
-	SignatureMethod      string                      // 签名算法，默认HmacSHA1
-	EnableACL            bool                        // 是否启用ACL认证
-	ACLConfigPath        string                      // ACL配置文件路径
-	ACLHotReload         bool                        // 是否启用ACL配置热重载
+	AccessKey       string // ACL访问密钥
+	SecretKey       string // ACL秘密密钥
+	SecurityToken   string // ACL安全令牌
+	SignatureMethod string // 签名算法，默认HmacSHA1
+	EnableACL       bool   // 是否启用ACL认证
+	ACLConfigPath   string // ACL配置文件路径
+	ACLHotReload    bool   // 是否启用ACL配置热重载
 }
 
 // Subscription 订阅信息
 type Subscription struct {
-	Topic      string
+	Topic         string
 	SubExpression string
-	Listener   MessageListener
-	Filter     MessageFilter // 消息过滤器
+	Listener      MessageListener
+	Filter        MessageFilter // 消息过滤器
 }
 
 // NewConsumer 创建新的消费者
@@ -135,28 +82,23 @@ func NewConsumer(config *ConsumerConfig) *Consumer {
 	if config == nil {
 		config = DefaultConsumerConfig()
 	}
-	
+
 	consumer := &Consumer{
-		config:        config,
-		subscriptions: make(map[string]*Subscription),
-		shutdown:      make(chan struct{}),
+		config:              config,
+		subscriptions:       make(map[string]*Subscription),
+		shutdown:            make(chan struct{}),
 		loadBalanceStrategy: &AverageAllocateStrategy{}, // 默认使用平均分配策略
+		remotingClient:      remoting.NewRemotingClient(),
 	}
 	consumer.rebalanceService = NewRebalanceService(consumer)
-	
+
 	// 初始化消息追踪管理器（默认不启用）
 	consumer.traceManager = NewTraceManager(nil)
 	consumer.traceManager.SetEnabled(false)
-	
+
 	// 初始化ACL中间件（默认不启用）
 	consumer.aclMiddleware = nil
-	
-	// 初始化连接池
-	consumer.connectionPool = &SimpleConnectionPool{
-		connections: make(map[string]net.Conn),
-		maxIdle:     30 * time.Minute,
-	}
-	
+
 	return consumer
 }
 
@@ -189,36 +131,36 @@ func (c *Consumer) Subscribe(topic, subExpression string, listener MessageListen
 func (c *Consumer) SubscribeWithFilter(topic, subExpression string, listener MessageListener, filter MessageFilter) error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
-	
+
 	if c.started {
 		return fmt.Errorf("consumer already started, cannot subscribe to new topics")
 	}
-	
+
 	if topic == "" {
 		return fmt.Errorf("topic cannot be empty")
 	}
-	
+
 	if listener == nil {
 		return fmt.Errorf("message listener cannot be nil")
 	}
-	
+
 	// 检查是否已经订阅了该主题
 	if _, exists := c.subscriptions[topic]; exists {
 		return fmt.Errorf("topic %s already subscribed", topic)
 	}
-	
+
 	// 如果没有指定过滤器，根据subExpression创建默认过滤器
 	if filter == nil && subExpression != "" && subExpression != "*" {
 		filter = NewTagFilterFromExpression(subExpression)
 	}
-	
+
 	c.subscriptions[topic] = &Subscription{
 		Topic:         topic,
 		SubExpression: subExpression,
 		Listener:      listener,
 		Filter:        filter,
 	}
-	
+
 	log.Printf("Subscribed to topic: %s with expression: %s", topic, subExpression)
 	return nil
 }
@@ -242,43 +184,43 @@ func (c *Consumer) SubscribeWithSQLFilter(topic, sqlExpression string, listener 
 func (c *Consumer) Start() error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
-	
+
 	if c.started {
 		return fmt.Errorf("consumer already started")
 	}
-	
+
 	if len(c.subscriptions) == 0 {
 		return fmt.Errorf("no subscriptions found, please subscribe to topics first")
 	}
-	
+
 	// 解析NameServer地址
 	c.nameServerAddrs = []string{c.config.NameServerAddr}
-	
+
 	// 启动重平衡服务
 	c.rebalanceService.Start()
-	
+
 	// 启动消息追踪管理器
 	if c.traceManager != nil {
 		c.traceManager.Start()
 	}
-	
+
 	// 初始化ACL中间件
 	if err := c.initACLMiddleware(); err != nil {
 		return fmt.Errorf("failed to initialize ACL middleware: %v", err)
 	}
-	
+
 	// 启动心跳机制
 	c.startHeartbeat()
-	
+
 	// 启动消费线程
 	for i := 0; i < c.config.ConsumeThreadMax; i++ {
 		c.wg.Add(1)
 		go c.consumeLoop()
 	}
-	
+
 	c.started = true
 	log.Printf("Consumer started: group=%s, threads=%d", c.config.GroupName, c.config.ConsumeThreadMax)
-	
+
 	return nil
 }
 
@@ -286,43 +228,43 @@ func (c *Consumer) Start() error {
 func (c *Consumer) Stop() error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
-	
+
 	if !c.started {
 		return fmt.Errorf("consumer not started")
 	}
-	
+
 	// 停止心跳机制
 	c.stopHeartbeat()
-	
+
 	// 停止重平衡服务
 	c.rebalanceService.Stop()
-	
+
 	// 停止消息追踪管理器
 	if c.traceManager != nil {
 		c.traceManager.Stop()
 	}
-	
-	// 关闭连接池
-	if c.connectionPool != nil {
-		c.connectionPool.Close()
+
+	// 关闭remoting客户端
+	if c.remotingClient != nil {
+		c.remotingClient.Close()
 	}
-	
+
 	close(c.shutdown)
 	c.wg.Wait()
-	
+
 	c.started = false
 	log.Printf("Consumer stopped: group=%s", c.config.GroupName)
-	
+
 	return nil
 }
 
 // consumeLoop 消费循环
 func (c *Consumer) consumeLoop() {
 	defer c.wg.Done()
-	
+
 	ticker := time.NewTicker(c.config.PullInterval)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-c.shutdown:
@@ -341,7 +283,7 @@ func (c *Consumer) pullAndConsumeMessages() {
 		subscriptions[k] = v
 	}
 	c.mutex.RUnlock()
-	
+
 	for topic, subscription := range subscriptions {
 		c.pullMessagesForTopic(topic, subscription)
 	}
@@ -355,33 +297,33 @@ func (c *Consumer) pullMessagesForTopic(topic string, subscription *Subscription
 		log.Printf("Failed to get route info for topic %s: %v", topic, err)
 		return
 	}
-	
+
 	if routeData == nil || len(routeData.QueueDatas) == 0 {
 		log.Printf("No available queues for topic %s", topic)
 		return
 	}
-	
+
 	// 2. 选择消息队列
 	mq := c.selectMessageQueue(routeData, topic)
 	if mq == nil {
 		log.Printf("Failed to select message queue for topic %s", topic)
 		return
 	}
-	
+
 	// 3. 获取消费进度
 	offset, err := c.getConsumeOffset(mq)
 	if err != nil {
 		log.Printf("Failed to get consume offset for queue %v, using 0: %v", mq, err)
 		offset = 0
 	}
-	
+
 	// 4. 发送拉取请求到Broker
 	messages, nextOffset, err := c.pullMessagesFromBroker(mq, offset)
 	if err != nil {
 		log.Printf("Failed to pull messages from broker: %v", err)
 		return
 	}
-	
+
 	// 5. 更新消费进度
 	if len(messages) > 0 {
 		c.updateConsumeOffset(mq, nextOffset)
@@ -394,40 +336,21 @@ func (c *Consumer) getTopicRouteFromNameServer(topic string) (*TopicRouteData, e
 	if c.config.NameServerAddr == "" {
 		return nil, fmt.Errorf("nameserver address not set")
 	}
-	
-	// 从连接池获取连接到NameServer
-	conn, err := c.connectionPool.GetConnection(c.config.NameServerAddr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get connection to nameserver %s: %v", c.config.NameServerAddr, err)
-	}
-	defer c.connectionPool.ReleaseConnection(c.config.NameServerAddr, conn)
-	
+
 	// 构造获取路由信息的请求
-	request := &RemotingCommand{
-		Code:     GET_ROUTEINTO_BY_TOPIC,
-		Version:  VERSION,
-		Opaque:   atomic.AddInt32(&requestId, 1),
-		Flag:     0,
-		Remark:   "",
-		ExtFields: map[string]string{"topic": topic},
-	}
-	
-	// 发送请求
-	err = c.sendRequest(conn, request)
+	request := protocol.CreateRemotingCommand(protocol.GetRouteInfoByTopic)
+	request.ExtFields = map[string]string{"topic": topic}
+
+	// 使用remoting客户端发送请求
+	response, err := c.remotingClient.SendSync(c.config.NameServerAddr, request, 3000)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %v", err)
 	}
-	
-	// 接收响应
-	response, err := c.receiveResponse(conn)
-	if err != nil {
-		return nil, fmt.Errorf("failed to receive response: %v", err)
-	}
-	
-	if response.Code != SUCCESS {
+
+	if response.Code != 0 {
 		return nil, fmt.Errorf("nameserver returned error: %s", response.Remark)
 	}
-	
+
 	// 解析路由数据
 	var routeData TopicRouteData
 	if len(response.Body) > 0 {
@@ -436,7 +359,7 @@ func (c *Consumer) getTopicRouteFromNameServer(topic string) (*TopicRouteData, e
 			return nil, fmt.Errorf("failed to unmarshal route data: %v", err)
 		}
 	}
-	
+
 	return &routeData, nil
 }
 
@@ -445,11 +368,11 @@ func (c *Consumer) selectMessageQueue(routeData *TopicRouteData, topic string) *
 	if len(routeData.QueueDatas) == 0 {
 		return nil
 	}
-	
+
 	// 简单的轮询选择策略
 	c.queueSelectorIndex++
 	queueData := routeData.QueueDatas[c.queueSelectorIndex%len(routeData.QueueDatas)]
-	
+
 	// 选择一个可用的Broker
 	var brokerAddr string
 	for _, brokerData := range routeData.BrokerDatas {
@@ -460,11 +383,11 @@ func (c *Consumer) selectMessageQueue(routeData *TopicRouteData, topic string) *
 			}
 		}
 	}
-	
+
 	if brokerAddr == "" {
 		return nil
 	}
-	
+
 	return &MessageQueue{
 		Topic:      topic,
 		BrokerName: queueData.BrokerName,
@@ -494,7 +417,7 @@ func (c *Consumer) consumeMessages(messages []*MessageExt, listener MessageListe
 		log.Printf("No listener found for messages, skipping %d messages", len(messages))
 		return
 	}
-	
+
 	// ACL验证：如果启用了ACL，验证消息权限
 	if c.IsACLEnabled() {
 		verifiedMessages := make([]*MessageExt, 0, len(messages))
@@ -507,16 +430,16 @@ func (c *Consumer) consumeMessages(messages []*MessageExt, listener MessageListe
 		}
 		messages = verifiedMessages
 	}
-	
+
 	// 如果没有通过ACL验证的消息，直接返回
 	if len(messages) == 0 {
 		log.Printf("No messages passed ACL verification")
 		return
 	}
-	
+
 	// 调用消息监听器处理消息
 	result := listener.ConsumeMessage(messages)
-	
+
 	switch result {
 	case ConsumeSuccess:
 		log.Printf("Successfully consumed %d messages", len(messages))
@@ -540,7 +463,7 @@ func (c *Consumer) consumeMessagesWithFilter(messages []*MessageExt, subscriptio
 	if len(messages) == 0 || subscription == nil || subscription.Listener == nil {
 		return
 	}
-	
+
 	// 应用过滤器
 	filteredMessages := make([]*MessageExt, 0, len(messages))
 	for _, msg := range messages {
@@ -550,7 +473,7 @@ func (c *Consumer) consumeMessagesWithFilter(messages []*MessageExt, subscriptio
 			log.Printf("Message filtered out: %s, topic: %s, tags: %s", msg.MsgId, msg.Topic, msg.Tags)
 		}
 	}
-	
+
 	// 消费通过过滤器的消息
 	if len(filteredMessages) > 0 {
 		c.consumeWithTrace(filteredMessages, subscription)
@@ -566,12 +489,12 @@ func (c *Consumer) consumeWithTrace(msgs []*MessageExt, subscription *Subscripti
 			traceCtx = CreateConsumeTraceContext(c.config.GroupName, msg)
 			traceCtx.TimeStamp = time.Now().UnixMilli()
 		}
-		
+
 		start := time.Now()
-		
+
 		// 消费消息
 		result := subscription.Listener.ConsumeMessage([]*MessageExt{msg})
-		
+
 		// 更新追踪信息
 		if traceCtx != nil {
 			traceCtx.Success = (result == ConsumeSuccess)
@@ -586,12 +509,12 @@ func (c *Consumer) consumeWithTrace(msgs []*MessageExt, subscription *Subscripti
 func (c *Consumer) GetSubscriptions() map[string]*Subscription {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
-	
+
 	result := make(map[string]*Subscription)
 	for k, v := range c.subscriptions {
 		result[k] = v
 	}
-	
+
 	return result
 }
 
@@ -628,17 +551,17 @@ func (c *Consumer) EnableTrace(nameServerAddr string, traceTopic string) error {
 	if c.traceManager == nil {
 		return fmt.Errorf("trace manager not initialized")
 	}
-	
+
 	// 创建追踪分发器
 	dispatcher := NewDefaultTraceDispatcher(nameServerAddr, traceTopic)
 	c.traceManager = NewTraceManager(dispatcher)
 	c.traceManager.SetEnabled(true)
-	
+
 	// 如果消费者已启动，启动追踪管理器
 	if c.IsStarted() {
 		return c.traceManager.Start()
 	}
-	
+
 	return nil
 }
 
@@ -667,7 +590,7 @@ func (c *Consumer) RemoveTraceHook(hookName string) {
 func (c *Consumer) IsStarted() bool {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
-	
+
 	return c.started
 }
 
@@ -676,12 +599,12 @@ func (c *Consumer) UpdateNameServerAddr() error {
 	if c.config.NameServerAddr == "" {
 		return fmt.Errorf("nameserver address not set")
 	}
-	
+
 	log.Printf("Updating route info from NameServer: %s", c.config.NameServerAddr)
-	
+
 	// 更新NameServer地址列表
 	c.nameServerAddrs = []string{c.config.NameServerAddr}
-	
+
 	// 获取所有已订阅Topic的路由信息
 	c.mutex.RLock()
 	subscriptions := make(map[string]*Subscription)
@@ -689,7 +612,7 @@ func (c *Consumer) UpdateNameServerAddr() error {
 		subscriptions[topic] = sub
 	}
 	c.mutex.RUnlock()
-	
+
 	// 为每个订阅的Topic更新路由信息
 	for topic := range subscriptions {
 		routeData, err := c.getTopicRouteFromNameServer(topic)
@@ -697,13 +620,13 @@ func (c *Consumer) UpdateNameServerAddr() error {
 			log.Printf("Failed to get route info for topic %s: %v", topic, err)
 			continue
 		}
-		
+
 		if routeData != nil {
-			log.Printf("Successfully updated route info for topic %s: %d queues, %d brokers", 
+			log.Printf("Successfully updated route info for topic %s: %d queues, %d brokers",
 				topic, len(routeData.QueueDatas), len(routeData.BrokerDatas))
 		}
 	}
-	
+
 	log.Printf("Route info update completed for %d topics", len(subscriptions))
 	return nil
 }
@@ -714,9 +637,9 @@ func (c *Consumer) RebalanceQueue() error {
 		// 广播模式不需要重平衡
 		return nil
 	}
-	
+
 	log.Printf("Rebalancing queues for consumer group: %s", c.config.GroupName)
-	
+
 	// 获取所有订阅的Topic
 	c.mutex.RLock()
 	subscriptions := make(map[string]*Subscription)
@@ -724,7 +647,7 @@ func (c *Consumer) RebalanceQueue() error {
 		subscriptions[topic] = sub
 	}
 	c.mutex.RUnlock()
-	
+
 	// 为每个Topic执行重平衡
 	for topic := range subscriptions {
 		err := c.rebalanceTopicQueues(topic)
@@ -733,7 +656,7 @@ func (c *Consumer) RebalanceQueue() error {
 			continue
 		}
 	}
-	
+
 	log.Printf("Queue rebalance completed for %d topics", len(subscriptions))
 	return nil
 }
@@ -745,11 +668,11 @@ func (c *Consumer) rebalanceTopicQueues(topic string) error {
 	if err != nil {
 		return fmt.Errorf("failed to get route data for topic %s: %v", topic, err)
 	}
-	
+
 	if routeData == nil || len(routeData.QueueDatas) == 0 {
 		return fmt.Errorf("no queue data found for topic %s", topic)
 	}
-	
+
 	// 构建所有消息队列列表
 	mqAll := make([]*MessageQueue, 0)
 	for _, queueData := range routeData.QueueDatas {
@@ -762,18 +685,18 @@ func (c *Consumer) rebalanceTopicQueues(topic string) error {
 			mqAll = append(mqAll, mq)
 		}
 	}
-	
+
 	// 模拟获取消费者组中的所有消费者ID
 	cidAll := c.getConsumerGroupMembers()
-	
+
 	// 使用负载均衡策略分配队列
 	if c.loadBalanceStrategy != nil {
 		currentCID := c.getConsumerID()
 		allocatedQueues := c.loadBalanceStrategy.Allocate(c.config.GroupName, currentCID, mqAll, cidAll)
-		
-		log.Printf("Topic %s rebalanced: allocated %d queues out of %d total queues", 
+
+		log.Printf("Topic %s rebalanced: allocated %d queues out of %d total queues",
 			topic, len(allocatedQueues), len(mqAll))
-		
+
 		// 这里可以进一步处理分配的队列，比如更新本地队列分配信息
 		for _, mq := range allocatedQueues {
 			log.Printf("Allocated queue: %s-%s-%d", mq.Topic, mq.BrokerName, mq.QueueId)
@@ -781,7 +704,7 @@ func (c *Consumer) rebalanceTopicQueues(topic string) error {
 	} else {
 		log.Printf("No load balance strategy set, using default allocation for topic %s", topic)
 	}
-	
+
 	return nil
 }
 
@@ -803,7 +726,7 @@ func (c *Consumer) initACLMiddleware() error {
 	if !c.config.EnableACL {
 		return nil
 	}
-	
+
 	// 从配置文件加载ACL配置
 	if c.config.ACLConfigPath != "" {
 		aclMiddleware, err := NewACLMiddlewareFromConfig(c.config.ACLConfigPath, c.config.ACLHotReload)
@@ -819,7 +742,7 @@ func (c *Consumer) initACLMiddleware() error {
 		}
 		c.aclMiddleware = NewACLMiddleware(c.config.AccessKey, c.config.SecretKey, signatureMethod, true)
 	}
-	
+
 	return nil
 }
 
@@ -830,7 +753,7 @@ func (c *Consumer) SetACLConfig(accessKey, secretKey string, signatureMethod ACL
 	c.config.AccessKey = accessKey
 	c.config.SecretKey = secretKey
 	c.config.SignatureMethod = string(signatureMethod)
-	
+
 	return nil
 }
 
@@ -843,7 +766,7 @@ func (c *Consumer) EnableACL(accessKey, secretKey string) error {
 func (c *Consumer) DisableACL() {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
-	
+
 	c.config.EnableACL = false
 	c.aclMiddleware = nil
 }
@@ -860,21 +783,21 @@ func (c *Consumer) verifyMessageACL(msg *MessageExt) bool {
 	if c.aclMiddleware == nil || !c.aclMiddleware.IsEnabled() {
 		return true // 如果没有ACL中间件或未启用，默认通过
 	}
-	
+
 	// 构造认证头信息进行验证
 	authHeaders, err := c.aclMiddleware.GenerateAuthHeaders(msg.Topic, c.config.GroupName, msg.MsgId)
 	if err != nil {
 		log.Printf("Failed to generate auth headers for message verification: %v", err)
 		return false
 	}
-	
+
 	// 验证认证头信息
 	err = c.aclMiddleware.VerifyAuthHeaders(authHeaders, msg.Topic, c.config.GroupName, msg.MsgId)
 	if err != nil {
 		log.Printf("ACL verification failed for message %s: %v", msg.MsgId, err)
 		return false
 	}
-	
+
 	return true
 }
 
@@ -882,7 +805,7 @@ func (c *Consumer) verifyMessageACL(msg *MessageExt) bool {
 func (c *Consumer) getConsumeOffset(mq *MessageQueue) (int64, error) {
 	c.offsetMutex.RLock()
 	defer c.offsetMutex.RUnlock()
-	
+
 	key := fmt.Sprintf("%s-%s-%d", mq.Topic, mq.BrokerName, mq.QueueId)
 	if offset, ok := c.consumeOffsets[key]; ok {
 		return offset, nil
@@ -894,11 +817,11 @@ func (c *Consumer) getConsumeOffset(mq *MessageQueue) (int64, error) {
 func (c *Consumer) updateConsumeOffset(mq *MessageQueue, offset int64) {
 	c.offsetMutex.Lock()
 	defer c.offsetMutex.Unlock()
-	
+
 	if c.consumeOffsets == nil {
 		c.consumeOffsets = make(map[string]int64)
 	}
-	
+
 	key := fmt.Sprintf("%s-%s-%d", mq.Topic, mq.BrokerName, mq.QueueId)
 	c.consumeOffsets[key] = offset
 }
@@ -910,52 +833,41 @@ func (c *Consumer) pullMessagesFromBroker(mq *MessageQueue, offset int64) ([]*Me
 	if err != nil {
 		return nil, offset, fmt.Errorf("failed to get broker address: %v", err)
 	}
-	
-	// 2. 从连接池获取连接
-	conn, err := c.connectionPool.GetConnection(brokerAddr)
-	if err != nil {
-		return nil, offset, fmt.Errorf("failed to get connection to broker: %v", err)
+
+	// 2. 构造拉取消息请求
+	request := protocol.CreateRemotingCommand(protocol.PullMessage)
+	request.ExtFields = map[string]string{
+		"consumerGroup":        c.config.GroupName,
+		"topic":                mq.Topic,
+		"queueId":              fmt.Sprintf("%d", mq.QueueId),
+		"queueOffset":          fmt.Sprintf("%d", offset),
+		"maxMsgNums":           fmt.Sprintf("%d", c.config.PullBatchSize),
+		"sysFlag":              "0",
+		"commitOffset":         fmt.Sprintf("%d", offset),
+		"suspendTimeoutMillis": "15000",
+		"subscription":         "*",
+		"subVersion":           fmt.Sprintf("%d", time.Now().Unix()),
+		"expressionType":       "TAG",
 	}
-	defer c.connectionPool.ReleaseConnection(brokerAddr, conn)
-	
-	// 3. 构造拉取消息请求
-	request := &RemotingCommand{
-		Code:      11, // PULL_MESSAGE
-		Language:  "JAVA",
-		Version:   VERSION,
-		Opaque:    atomic.AddInt32(&requestId, 1),
-		Flag:      0,
-		Remark:    "",
-		ExtFields: make(map[string]string),
-		Body:      nil,
+
+	// 3. 添加ACL认证头
+	if c.aclMiddleware != nil && c.aclMiddleware.IsEnabled() {
+		authHeaders, err := c.aclMiddleware.GenerateAuthHeaders(mq.Topic, c.config.GroupName, "")
+		if err != nil {
+			return nil, offset, fmt.Errorf("failed to generate ACL auth headers: %v", err)
+		}
+		for k, v := range authHeaders {
+			request.ExtFields[k] = v
+		}
 	}
-	
-	// 4. 设置请求头参数
-	request.ExtFields["consumerGroup"] = c.config.GroupName
-	request.ExtFields["topic"] = mq.Topic
-	request.ExtFields["queueId"] = fmt.Sprintf("%d", mq.QueueId)
-	request.ExtFields["queueOffset"] = fmt.Sprintf("%d", offset)
-	request.ExtFields["maxMsgNums"] = fmt.Sprintf("%d", c.config.PullBatchSize)
-	request.ExtFields["sysFlag"] = "0"
-	request.ExtFields["commitOffset"] = fmt.Sprintf("%d", offset)
-	request.ExtFields["suspendTimeoutMillis"] = "15000"
-	request.ExtFields["subscription"] = "*"
-	request.ExtFields["subVersion"] = fmt.Sprintf("%d", time.Now().Unix())
-	request.ExtFields["expressionType"] = "TAG"
-	
-	// 5. 发送请求
-	err = c.sendRequest(conn, request)
+
+	// 4. 使用remoting客户端发送请求
+	response, err := c.remotingClient.SendSync(brokerAddr, request, 5000)
 	if err != nil {
 		return nil, offset, fmt.Errorf("failed to send pull request: %v", err)
 	}
-	
-	// 6. 接收响应
-	response, err := c.receiveResponse(conn)
-	if err != nil {
-		return nil, offset, fmt.Errorf("failed to receive pull response: %v", err)
-	}
-	
-	// 7. 解析响应
+
+	// 5. 解析响应
 	if response.Code != 0 { // SUCCESS
 		// 如果是PullNotFound(19)，返回空消息列表
 		if response.Code == 19 {
@@ -963,13 +875,13 @@ func (c *Consumer) pullMessagesFromBroker(mq *MessageQueue, offset int64) ([]*Me
 		}
 		return nil, offset, fmt.Errorf("pull message failed with code %d: %s", response.Code, response.Remark)
 	}
-	
-	// 8. 解析消息数据
+
+	// 6. 解析消息数据
 	messages, nextOffset, err := c.parseMessageResponse(response, mq)
 	if err != nil {
 		return nil, offset, fmt.Errorf("failed to parse message response: %v", err)
 	}
-	
+
 	return messages, nextOffset, nil
 }
 
@@ -985,31 +897,31 @@ func (c *Consumer) getBrokerAddr(brokerName string) (string, error) {
 }
 
 // parseMessageResponse 解析消息响应
-func (c *Consumer) parseMessageResponse(response *RemotingCommand, mq *MessageQueue) ([]*MessageExt, int64, error) {
+func (c *Consumer) parseMessageResponse(response *protocol.RemotingCommand, mq *MessageQueue) ([]*MessageExt, int64, error) {
 	// 从响应头中获取nextBeginOffset
 	nextOffsetStr, exists := response.ExtFields["nextBeginOffset"]
 	if !exists {
 		return nil, 0, fmt.Errorf("nextBeginOffset not found in response")
 	}
-	
+
 	nextOffset := int64(0)
 	if nextOffsetStr != "" {
 		if parsed, err := fmt.Sscanf(nextOffsetStr, "%d", &nextOffset); err != nil || parsed != 1 {
 			log.Printf("Failed to parse nextBeginOffset: %s", nextOffsetStr)
 		}
 	}
-	
+
 	// 如果没有消息体，返回空消息列表
 	if response.Body == nil || len(response.Body) == 0 {
 		return []*MessageExt{}, nextOffset, nil
 	}
-	
+
 	// 尝试多种消息解析格式
 	messages, err := c.parseMessagesFromBody(response.Body, mq)
 	if err != nil {
 		return nil, nextOffset, fmt.Errorf("failed to parse message body: %v", err)
 	}
-	
+
 	return messages, nextOffset, nil
 }
 
@@ -1019,17 +931,17 @@ func (c *Consumer) parseMessagesFromBody(body []byte, mq *MessageQueue) ([]*Mess
 	if messages, err := c.parseJSONMessages(body); err == nil {
 		return messages, nil
 	}
-	
+
 	// 尝试二进制格式解析
 	if messages, err := c.parseBinaryMessages(body, mq); err == nil {
 		return messages, nil
 	}
-	
+
 	// 尝试简单文本格式解析
 	if messages, err := c.parseTextMessages(body, mq); err == nil {
 		return messages, nil
 	}
-	
+
 	return nil, fmt.Errorf("unsupported message format")
 }
 
@@ -1053,42 +965,42 @@ func (c *Consumer) parseBinaryMessages(body []byte, mq *MessageQueue) ([]*Messag
 	if len(body) < 4 {
 		return nil, fmt.Errorf("binary data too short")
 	}
-	
+
 	var messages []*MessageExt
 	offset := 0
-	
+
 	for offset < len(body) {
 		// 检查剩余数据长度
 		if offset+4 > len(body) {
 			break
 		}
-		
+
 		// 读取消息长度（4字节）
 		msgLen := int(body[offset])<<24 | int(body[offset+1])<<16 | int(body[offset+2])<<8 | int(body[offset+3])
 		offset += 4
-		
+
 		// 检查消息长度是否有效
 		if msgLen <= 0 || offset+msgLen > len(body) {
 			break
 		}
-		
+
 		// 提取消息数据
 		msgData := body[offset : offset+msgLen]
 		offset += msgLen
-		
+
 		// 解析消息
 		msg, err := c.deserializeMessage(msgData, mq)
 		if err != nil {
 			continue // 跳过无法解析的消息
 		}
-		
+
 		messages = append(messages, msg)
 	}
-	
+
 	if len(messages) == 0 {
 		return nil, fmt.Errorf("no valid messages found in binary data")
 	}
-	
+
 	return messages, nil
 }
 
@@ -1105,7 +1017,7 @@ func (c *Consumer) parseTextMessages(body []byte, mq *MessageQueue) ([]*MessageE
 		QueueId:   mq.QueueId,
 		StoreSize: int32(len(body)),
 	}
-	
+
 	// 尝试从body中提取更多信息
 	if len(body) > 0 {
 		// 检查是否包含消息ID
@@ -1119,7 +1031,7 @@ func (c *Consumer) parseTextMessages(body []byte, mq *MessageQueue) ([]*MessageE
 			}
 		}
 	}
-	
+
 	return []*MessageExt{msg}, nil
 }
 
@@ -1128,23 +1040,23 @@ func (c *Consumer) deserializeMessage(data []byte, mq *MessageQueue) (*MessageEx
 	if len(data) < 8 {
 		return nil, fmt.Errorf("message data too short")
 	}
-	
+
 	// 简化的反序列化逻辑
 	// 实际实现应该按照RocketMQ的消息格式进行解析
 	offset := 0
-	
+
 	// 读取消息体长度（4字节）
 	bodyLen := int(data[offset])<<24 | int(data[offset+1])<<16 | int(data[offset+2])<<8 | int(data[offset+3])
 	offset += 4
-	
+
 	if bodyLen <= 0 || offset+bodyLen > len(data) {
 		return nil, fmt.Errorf("invalid body length")
 	}
-	
+
 	// 提取消息体
 	body := data[offset : offset+bodyLen]
 	offset += bodyLen
-	
+
 	// 创建消息对象
 	msg := &MessageExt{
 		Message: &Message{
@@ -1156,7 +1068,7 @@ func (c *Consumer) deserializeMessage(data []byte, mq *MessageQueue) (*MessageEx
 		QueueId:   mq.QueueId,
 		StoreSize: int32(len(data)),
 	}
-	
+
 	// 尝试读取更多字段（如果数据足够）
 	if offset+8 <= len(data) {
 		// 读取队列偏移量（8字节）
@@ -1166,66 +1078,8 @@ func (c *Consumer) deserializeMessage(data []byte, mq *MessageQueue) (*MessageEx
 			int64(data[offset+6])<<8 | int64(data[offset+7])
 		msg.QueueOffset = queueOffset
 	}
-	
+
 	return msg, nil
-}
-
-// sendRequest 发送请求到服务器
-func (c *Consumer) sendRequest(conn net.Conn, request *RemotingCommand) error {
-	// 序列化请求
-	data, err := json.Marshal(request)
-	if err != nil {
-		return fmt.Errorf("failed to marshal request: %v", err)
-	}
-	
-	// 发送数据长度
-	length := int32(len(data))
-	lengthBytes := make([]byte, 4)
-	lengthBytes[0] = byte(length >> 24)
-	lengthBytes[1] = byte(length >> 16)
-	lengthBytes[2] = byte(length >> 8)
-	lengthBytes[3] = byte(length)
-	
-	_, err = conn.Write(lengthBytes)
-	if err != nil {
-		return fmt.Errorf("failed to write length: %v", err)
-	}
-	
-	// 发送数据
-	_, err = conn.Write(data)
-	if err != nil {
-		return fmt.Errorf("failed to write data: %v", err)
-	}
-	
-	return nil
-}
-
-// receiveResponse 接收服务器响应
-func (c *Consumer) receiveResponse(conn net.Conn) (*RemotingCommand, error) {
-	// 读取响应长度
-	lengthBytes := make([]byte, 4)
-	_, err := conn.Read(lengthBytes)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read length: %v", err)
-	}
-	
-	length := int32(lengthBytes[0])<<24 | int32(lengthBytes[1])<<16 | int32(lengthBytes[2])<<8 | int32(lengthBytes[3])
-	
-	// 读取响应数据
-	data := make([]byte, length)
-	_, err = conn.Read(data)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read data: %v", err)
-	}
-	
-	// 反序列化响应
-	var response RemotingCommand
-	err = json.Unmarshal(data, &response)
-	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %v", err)
-	}
-	
-	return &response, nil
 }
 
 // commitConsumeProgress 提交消费进度到Broker
@@ -1233,7 +1087,7 @@ func (c *Consumer) commitConsumeProgress(messages []*MessageExt) error {
 	if len(messages) == 0 {
 		return nil
 	}
-	
+
 	// 按照队列分组消息
 	queueOffsets := make(map[string]int64)
 	for _, msg := range messages {
@@ -1243,7 +1097,7 @@ func (c *Consumer) commitConsumeProgress(messages []*MessageExt) error {
 			queueOffsets[key] = msg.QueueOffset + 1 // 下一个要消费的偏移量
 		}
 	}
-	
+
 	// 为每个队列提交消费进度
 	for key, offset := range queueOffsets {
 		err := c.commitOffsetToBroker(key, offset)
@@ -1252,7 +1106,7 @@ func (c *Consumer) commitConsumeProgress(messages []*MessageExt) error {
 			// 继续处理其他队列，不因为一个失败而全部失败
 		}
 	}
-	
+
 	return nil
 }
 
@@ -1261,44 +1115,25 @@ func (c *Consumer) commitOffsetToBroker(queueKey string, offset int64) error {
 	if c.config.NameServerAddr == "" {
 		return fmt.Errorf("nameserver address not set")
 	}
-	
-	// 从连接池获取连接到Broker (这里简化为连接NameServer)
-	conn, err := c.connectionPool.GetConnection(c.config.NameServerAddr)
-	if err != nil {
-		return fmt.Errorf("failed to get connection to broker: %v", err)
-	}
-	defer c.connectionPool.ReleaseConnection(c.config.NameServerAddr, conn)
-	
+
 	// 构造提交消费进度的请求
-	request := &RemotingCommand{
-		Code:     UPDATE_CONSUMER_OFFSET,
-		Version:  VERSION,
-		Opaque:   atomic.AddInt32(&requestId, 1),
-		Flag:     0,
-		Remark:   "",
-		ExtFields: map[string]string{
-			"consumerGroup": c.config.GroupName,
-			"queueKey":     queueKey,
-			"commitOffset": fmt.Sprintf("%d", offset),
-		},
+	request := protocol.CreateRemotingCommand(protocol.RequestCode(34)) // UPDATE_CONSUMER_OFFSET
+	request.ExtFields = map[string]string{
+		"consumerGroup": c.config.GroupName,
+		"queueKey":      queueKey,
+		"commitOffset":  fmt.Sprintf("%d", offset),
 	}
-	
-	// 发送请求
-	err = c.sendRequest(conn, request)
+
+	// 使用remoting客户端发送请求
+	response, err := c.remotingClient.SendSync(c.config.NameServerAddr, request, 3000)
 	if err != nil {
 		return fmt.Errorf("failed to send commit offset request: %v", err)
 	}
-	
-	// 接收响应
-	response, err := c.receiveResponse(conn)
-	if err != nil {
-		return fmt.Errorf("failed to receive commit offset response: %v", err)
-	}
-	
-	if response.Code != SUCCESS {
+
+	if response.Code != 0 {
 		return fmt.Errorf("broker returned error when committing offset: %s", response.Remark)
 	}
-	
+
 	log.Printf("Successfully committed offset %d for queue %s", offset, queueKey)
 	return nil
 }
@@ -1308,11 +1143,11 @@ func (c *Consumer) retryMessages(messages []*MessageExt) error {
 	if len(messages) == 0 {
 		return nil
 	}
-	
+
 	for _, msg := range messages {
 		// 增加重试次数
 		msg.ReconsumeTimes++
-		
+
 		// 检查是否超过最大重试次数
 		maxRetryTimes := int32(16) // RocketMQ默认最大重试16次
 		if msg.ReconsumeTimes >= maxRetryTimes {
@@ -1323,13 +1158,13 @@ func (c *Consumer) retryMessages(messages []*MessageExt) error {
 			}
 			continue
 		}
-		
+
 		// 计算延迟时间 (指数退避)
 		delayLevel := c.calculateDelayLevel(msg.ReconsumeTimes)
 		delayTime := c.calculateDelayTime(delayLevel)
-		
+
 		log.Printf("Retrying message %s (attempt %d) with delay %v", msg.MsgId, msg.ReconsumeTimes, delayTime)
-		
+
 		// 延迟重新投递消息
 		go func(message *MessageExt, delay time.Duration) {
 			time.Sleep(delay)
@@ -1339,7 +1174,7 @@ func (c *Consumer) retryMessages(messages []*MessageExt) error {
 			}
 		}(msg, delayTime)
 	}
-	
+
 	return nil
 }
 
@@ -1358,26 +1193,26 @@ func (c *Consumer) calculateDelayLevel(retryTimes int32) int32 {
 // calculateDelayTime 根据延迟级别计算延迟时间
 func (c *Consumer) calculateDelayTime(delayLevel int32) time.Duration {
 	delayTimes := []time.Duration{
-		1 * time.Second,   // level 1
-		5 * time.Second,   // level 2
-		10 * time.Second,  // level 3
-		30 * time.Second,  // level 4
-		1 * time.Minute,   // level 5
-		2 * time.Minute,   // level 6
-		3 * time.Minute,   // level 7
-		4 * time.Minute,   // level 8
-		5 * time.Minute,   // level 9
-		6 * time.Minute,   // level 10
-		7 * time.Minute,   // level 11
-		8 * time.Minute,   // level 12
-		9 * time.Minute,   // level 13
-		10 * time.Minute,  // level 14
-		20 * time.Minute,  // level 15
-		30 * time.Minute,  // level 16
-		1 * time.Hour,     // level 17
-		2 * time.Hour,     // level 18
+		1 * time.Second,  // level 1
+		5 * time.Second,  // level 2
+		10 * time.Second, // level 3
+		30 * time.Second, // level 4
+		1 * time.Minute,  // level 5
+		2 * time.Minute,  // level 6
+		3 * time.Minute,  // level 7
+		4 * time.Minute,  // level 8
+		5 * time.Minute,  // level 9
+		6 * time.Minute,  // level 10
+		7 * time.Minute,  // level 11
+		8 * time.Minute,  // level 12
+		9 * time.Minute,  // level 13
+		10 * time.Minute, // level 14
+		20 * time.Minute, // level 15
+		30 * time.Minute, // level 16
+		1 * time.Hour,    // level 17
+		2 * time.Hour,    // level 18
 	}
-	
+
 	if delayLevel <= 0 || int(delayLevel) > len(delayTimes) {
 		return 1 * time.Second
 	}
@@ -1388,28 +1223,28 @@ func (c *Consumer) calculateDelayTime(delayLevel int32) time.Duration {
 func (c *Consumer) sendToDLQ(msg *MessageExt) error {
 	// 构造死信队列Topic名称
 	dlqTopic := fmt.Sprintf("%%DLQ%%_%s", c.config.GroupName)
-	
+
 	// 创建死信消息
 	dlqMsg := &Message{
 		Topic:      dlqTopic,
 		Body:       msg.Body,
 		Properties: make(map[string]string),
 	}
-	
+
 	// 复制原消息属性
 	for k, v := range msg.Properties {
 		dlqMsg.Properties[k] = v
 	}
-	
+
 	// 添加死信队列相关属性
 	dlqMsg.Properties["ORIGIN_TOPIC"] = msg.Topic
 	dlqMsg.Properties["ORIGIN_MSG_ID"] = msg.MsgId
 	dlqMsg.Properties["RETRY_TIMES"] = fmt.Sprintf("%d", msg.ReconsumeTimes)
 	dlqMsg.Properties["DLQ_ORIGIN_QUEUE_ID"] = fmt.Sprintf("%d", msg.QueueId)
 	dlqMsg.Properties["DLQ_ORIGIN_BROKER"] = msg.StoreHost
-	
+
 	log.Printf("Sending message %s to DLQ topic %s after %d retries", msg.MsgId, dlqTopic, msg.ReconsumeTimes)
-	
+
 	// 实现真实的DLQ发送逻辑
 	return c.sendMessageToBroker(dlqMsg, dlqTopic)
 }
@@ -1421,38 +1256,30 @@ func (c *Consumer) sendMessageToBroker(msg *Message, topic string) error {
 	if err != nil {
 		return fmt.Errorf("failed to get route for topic %s: %v", topic, err)
 	}
-	
+
 	// 选择消息队列
 	mq := c.selectMessageQueue(routeData, topic)
 	if mq == nil {
 		return fmt.Errorf("no available message queue for topic %s", topic)
 	}
-	
+
 	// 获取Broker地址
 	brokerAddr, err := c.getBrokerAddr(mq.BrokerName)
 	if err != nil {
 		return fmt.Errorf("failed to get broker address for %s: %v", mq.BrokerName, err)
 	}
-	
+
 	// 构建发送请求
-	request := &RemotingCommand{
-		Code:      10, // SEND_MESSAGE
-		Language:  "JAVA",
-		Version:   VERSION,
-		Opaque:    atomic.AddInt32(&requestId, 1),
-		Flag:      0,
-		ExtFields: make(map[string]string),
-		Body:      msg.Body,
+	request := protocol.CreateRemotingCommand(protocol.SendMessage)
+	request.ExtFields = map[string]string{
+		"topic":         msg.Topic,
+		"queueId":       fmt.Sprintf("%d", mq.QueueId),
+		"sysFlag":       "0",
+		"bornTimestamp": fmt.Sprintf("%d", time.Now().UnixMilli()),
+		"flag":          "0",
+		"properties":    c.encodeProperties(msg.Properties),
 	}
-	
-	// 设置扩展字段
-	request.ExtFields["topic"] = msg.Topic
-	request.ExtFields["queueId"] = fmt.Sprintf("%d", mq.QueueId)
-	request.ExtFields["sysFlag"] = "0"
-	request.ExtFields["bornTimestamp"] = fmt.Sprintf("%d", time.Now().UnixMilli())
-	request.ExtFields["flag"] = "0"
-	request.ExtFields["properties"] = c.encodeProperties(msg.Properties)
-	
+
 	// 添加ACL认证头
 	if c.aclMiddleware != nil {
 		authHeaders, err := c.aclMiddleware.GenerateAuthHeaders(msg.Topic, c.config.GroupName, "")
@@ -1463,30 +1290,18 @@ func (c *Consumer) sendMessageToBroker(msg *Message, topic string) error {
 			request.ExtFields[k] = v
 		}
 	}
-	
-	// 发送请求到Broker
-	conn, err := c.connectionPool.GetConnection(brokerAddr)
+
+	// 使用remoting客户端发送请求
+	response, err := c.remotingClient.SendSync(brokerAddr, request, 5000)
 	if err != nil {
-		return fmt.Errorf("failed to get connection to broker %s: %v", brokerAddr, err)
-	}
-	defer c.connectionPool.ReleaseConnection(brokerAddr, conn)
-	
-	// 发送请求
-	if err := c.sendRequest(conn, request); err != nil {
 		return fmt.Errorf("failed to send request to broker: %v", err)
 	}
-	
-	// 接收响应
-	response, err := c.receiveResponse(conn)
-	if err != nil {
-		return fmt.Errorf("failed to receive response from broker: %v", err)
-	}
-	
+
 	// 检查响应状态
 	if response.Code != 0 {
 		return fmt.Errorf("broker returned error code %d: %s", response.Code, response.Remark)
 	}
-	
+
 	log.Printf("Successfully sent message to DLQ topic %s", topic)
 	return nil
 }
@@ -1496,7 +1311,7 @@ func (c *Consumer) encodeProperties(properties map[string]string) string {
 	if len(properties) == 0 {
 		return ""
 	}
-	
+
 	var parts []string
 	for k, v := range properties {
 		parts = append(parts, fmt.Sprintf("%s%c%s", k, 1, v))
@@ -1528,28 +1343,28 @@ func (c *Consumer) redeliverMessage(msg *MessageExt) error {
 func (c *Consumer) retryMessageToQueue(msg *MessageExt, mq *MessageQueue, delayLevel int) error {
 	// 构造重试Topic名称
 	retryTopic := fmt.Sprintf("%%RETRY%%_%s", c.config.GroupName)
-	
+
 	// 创建重试消息
 	retryMsg := &Message{
 		Topic:      retryTopic,
 		Body:       msg.Body,
 		Properties: make(map[string]string),
 	}
-	
+
 	// 复制原消息属性
 	for k, v := range msg.Properties {
 		retryMsg.Properties[k] = v
 	}
-	
+
 	// 添加重试相关属性
 	retryMsg.Properties["ORIGIN_TOPIC"] = msg.Topic
 	retryMsg.Properties["ORIGIN_MSG_ID"] = msg.MsgId
 	retryMsg.Properties["RETRY_TIMES"] = fmt.Sprintf("%d", msg.ReconsumeTimes)
 	retryMsg.Properties["DELAY_LEVEL"] = fmt.Sprintf("%d", delayLevel)
-	
-	log.Printf("Retrying message %s to topic %s with delay level %d (attempt %d)", 
+
+	log.Printf("Retrying message %s to topic %s with delay level %d (attempt %d)",
 		msg.MsgId, retryTopic, delayLevel, msg.ReconsumeTimes)
-	
+
 	// 这里简化实现，实际应该发送到Broker的重试队列
 	// TODO: 实现真实的重试消息发送逻辑
 	return nil
@@ -1557,9 +1372,9 @@ func (c *Consumer) retryMessageToQueue(msg *MessageExt, mq *MessageQueue, delayL
 
 // HeartbeatData 心跳数据结构
 type HeartbeatData struct {
-	ClientID      string          `json:"clientID"`
-	ProducerData  []ProducerData  `json:"producerDataSet"`
-	ConsumerData  []ConsumerData  `json:"consumerDataSet"`
+	ClientID     string         `json:"clientID"`
+	ProducerData []ProducerData `json:"producerDataSet"`
+	ConsumerData []ConsumerData `json:"consumerDataSet"`
 }
 
 // ProducerData 生产者数据
@@ -1569,30 +1384,28 @@ type ProducerData struct {
 
 // ConsumerData 消费者数据
 type ConsumerData struct {
-	GroupName         string             `json:"groupName"`
-	ConsumeType       string             `json:"consumeType"`
-	MessageModel      string             `json:"messageModel"`
-	ConsumeFromWhere  string             `json:"consumeFromWhere"`
-	SubscriptionData  []SubscriptionData `json:"subscriptionDataSet"`
-	UnitMode          bool               `json:"unitMode"`
+	GroupName        string             `json:"groupName"`
+	ConsumeType      string             `json:"consumeType"`
+	MessageModel     string             `json:"messageModel"`
+	ConsumeFromWhere string             `json:"consumeFromWhere"`
+	SubscriptionData []SubscriptionData `json:"subscriptionDataSet"`
+	UnitMode         bool               `json:"unitMode"`
 }
-
-
 
 // startHeartbeat 启动心跳机制
 func (c *Consumer) startHeartbeat() {
 	if c.heartbeatTicker != nil {
 		c.heartbeatTicker.Stop()
 	}
-	
+
 	// 每30秒发送一次心跳
 	c.heartbeatTicker = time.NewTicker(30 * time.Second)
-	
+
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
 		defer c.heartbeatTicker.Stop()
-		
+
 		for {
 			select {
 			case <-c.shutdown:
@@ -1605,7 +1418,7 @@ func (c *Consumer) startHeartbeat() {
 			}
 		}
 	}()
-	
+
 	log.Printf("Heartbeat mechanism started for consumer group: %s", c.config.GroupName)
 }
 
@@ -1622,19 +1435,19 @@ func (c *Consumer) stopHeartbeat() {
 func (c *Consumer) sendHeartbeatToBroker() error {
 	// 构造心跳数据
 	heartbeatData := c.buildHeartbeatData()
-	
+
 	// 序列化心跳数据
 	heartbeatBody, err := json.Marshal(heartbeatData)
 	if err != nil {
 		return fmt.Errorf("failed to marshal heartbeat data: %v", err)
 	}
-	
+
 	// 获取Broker地址列表
 	brokerAddrs := c.getAllBrokerAddrs()
 	if len(brokerAddrs) == 0 {
 		return fmt.Errorf("no broker addresses available")
 	}
-	
+
 	// 向所有Broker发送心跳
 	var lastErr error
 	for _, brokerAddr := range brokerAddrs {
@@ -1646,7 +1459,7 @@ func (c *Consumer) sendHeartbeatToBroker() error {
 			log.Printf("Successfully sent heartbeat to broker %s", brokerAddr)
 		}
 	}
-	
+
 	return lastErr
 }
 
@@ -1661,14 +1474,14 @@ func (c *Consumer) buildHeartbeatData() *HeartbeatData {
 		SubscriptionData: c.buildSubscriptionData(),
 		UnitMode:         false,
 	}
-	
+
 	// 构造心跳数据
 	heartbeatData := &HeartbeatData{
 		ClientID:     c.getClientID(),
 		ProducerData: []ProducerData{}, // 消费者没有生产者数据
 		ConsumerData: []ConsumerData{consumerData},
 	}
-	
+
 	return heartbeatData
 }
 
@@ -1676,7 +1489,7 @@ func (c *Consumer) buildHeartbeatData() *HeartbeatData {
 func (c *Consumer) buildSubscriptionData() []SubscriptionData {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
-	
+
 	subscriptionData := make([]SubscriptionData, 0, len(c.subscriptions))
 	for topic, subscription := range c.subscriptions {
 		data := SubscriptionData{
@@ -1690,7 +1503,7 @@ func (c *Consumer) buildSubscriptionData() []SubscriptionData {
 		}
 		subscriptionData = append(subscriptionData, data)
 	}
-	
+
 	return subscriptionData
 }
 
@@ -1699,7 +1512,7 @@ func (c *Consumer) parseTagsFromExpression(expression string) []string {
 	if expression == "" || expression == "*" {
 		return []string{"*"}
 	}
-	
+
 	// 简单的标签解析，支持 "tag1||tag2||tag3" 格式
 	tags := make([]string, 0)
 	if expression != "" {
@@ -1712,54 +1525,33 @@ func (c *Consumer) parseTagsFromExpression(expression string) []string {
 			}
 		}
 	}
-	
+
 	if len(tags) == 0 {
 		tags = []string{"*"}
 	}
-	
+
 	return tags
 }
 
 // sendHeartbeatToBrokerAddr 向指定Broker地址发送心跳
 func (c *Consumer) sendHeartbeatToBrokerAddr(brokerAddr string, heartbeatBody []byte) error {
-	// 从连接池获取连接
-	conn, err := c.connectionPool.GetConnection(brokerAddr)
-	if err != nil {
-		return fmt.Errorf("failed to get connection to broker %s: %v", brokerAddr, err)
-	}
-	defer c.connectionPool.ReleaseConnection(brokerAddr, conn)
-	
 	// 构造心跳请求
-	request := &RemotingCommand{
-		Code:      HEART_BEAT,
-		Language:  "JAVA",
-		Version:   VERSION,
-		Opaque:    atomic.AddInt32(&requestId, 1),
-		Flag:      0,
-		Remark:    "",
-		ExtFields: make(map[string]string),
-		Body:      heartbeatBody,
+	request := protocol.CreateRemotingCommand(protocol.RequestCode(31)) // HEART_BEAT
+	request.ExtFields = map[string]string{
+		"clientID": c.getClientID(),
 	}
-	
-	// 添加客户端ID到扩展字段
-	request.ExtFields["clientID"] = c.getClientID()
-	
-	// 发送请求
-	err = c.sendRequest(conn, request)
+	request.Body = heartbeatBody
+
+	// 使用remoting客户端发送请求
+	response, err := c.remotingClient.SendSync(brokerAddr, request, 3000)
 	if err != nil {
 		return fmt.Errorf("failed to send heartbeat request: %v", err)
 	}
-	
-	// 接收响应
-	response, err := c.receiveResponse(conn)
-	if err != nil {
-		return fmt.Errorf("failed to receive heartbeat response: %v", err)
-	}
-	
-	if response.Code != SUCCESS {
+
+	if response.Code != 0 {
 		return fmt.Errorf("broker returned error for heartbeat: %s", response.Remark)
 	}
-	
+
 	return nil
 }
 
