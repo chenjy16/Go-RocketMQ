@@ -70,7 +70,7 @@ func main() {
 
 ##### 启用消息追踪
 
-```go
+``go
 package main
 
 import (
@@ -113,7 +113,7 @@ func main() {
 
 ##### 批量发送消息
 
-```go
+``go
 package main
 
 import (

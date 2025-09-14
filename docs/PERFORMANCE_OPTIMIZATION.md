@@ -1,43 +1,43 @@
-# Go-RocketMQ 性能优化指南
+# Go-RocketMQ Performance Optimization Guide
 
-本文档详细介绍了 Go-RocketMQ 项目中实现的性能优化特性，包括内存池管理、批量处理优化、网络性能优化和性能监控等功能。
+This document provides detailed information about the performance optimization features implemented in the Go-RocketMQ project, including memory pool management, batch processing optimization, network performance optimization, and performance monitoring.
 
-## 目录
+## Table of Contents
 
-- [概述](#概述)
-- [内存池管理](#内存池管理)
-- [批量处理优化](#批量处理优化)
-- [网络性能优化](#网络性能优化)
-- [性能监控](#性能监控)
-- [基准测试](#基准测试)
-- [最佳实践](#最佳实践)
-- [性能调优建议](#性能调优建议)
+- [Overview](#overview)
+- [Memory Pool Management](#memory-pool-management)
+- [Batch Processing Optimization](#batch-processing-optimization)
+- [Network Performance Optimization](#network-performance-optimization)
+- [Performance Monitoring](#performance-monitoring)
+- [Benchmark Testing](#benchmark-testing)
+- [Best Practices](#best-practices)
+- [Performance Tuning Recommendations](#performance-tuning-recommendations)
 
-## 概述
+## Overview
 
-Go-RocketMQ 的性能优化主要集中在以下几个方面：
+Go-RocketMQ's performance optimization focuses on several key areas:
 
-1. **内存池管理**：减少内存分配和GC压力
-2. **批量处理**：提高消息处理吞吐量
-3. **网络优化**：连接池、多路复用、压缩传输
-4. **性能监控**：实时监控和指标收集
+1. **Memory Pool Management**: Reduce memory allocation and GC pressure
+2. **Batch Processing**: Improve message processing throughput
+3. **Network Optimization**: Connection pooling, multiplexing, compressed transmission
+4. **Performance Monitoring**: Real-time monitoring and metrics collection
 
-这些优化可以显著提升系统的性能表现，特别是在高并发和大数据量场景下。
+These optimizations can significantly improve system performance, especially in high-concurrency and large-data-volume scenarios.
 
-## 内存池管理
+## Memory Pool Management
 
-### 功能特性
+### Features
 
-内存池管理模块提供了以下功能：
+The memory pool management module provides the following features:
 
-- **缓冲区池**：预分配不同大小的缓冲区，减少内存分配
-- **对象池**：复用消息对象，减少GC压力
-- **零拷贝缓冲区**：避免不必要的内存拷贝
-- **内存指标监控**：实时监控内存使用情况
+- **Buffer Pool**: Pre-allocate buffers of different sizes to reduce memory allocation
+- **Object Pool**: Reuse message objects to reduce GC pressure
+- **Zero-Copy Buffer**: Avoid unnecessary memory copying
+- **Memory Metrics Monitoring**: Real-time monitoring of memory usage
 
-### 使用方法
+### Usage
 
-#### 基础使用
+#### Basic Usage
 
 ```go
 package main
@@ -47,17 +47,17 @@ import (
 )
 
 func main() {
-    // 初始化全局内存池
+    // Initialize global memory pools
     performance.InitGlobalPools()
     
-    // 获取缓冲区
+    // Get buffer
     buf := performance.GetBuffer(1024)
     defer performance.PutBuffer(buf)
     
-    // 使用缓冲区
+    // Use buffer
     copy(buf, []byte("Hello, World!"))
     
-    // 获取消息对象
+    // Get message object
     msg := performance.GetMessage()
     defer performance.PutMessage(msg)
     
@@ -66,42 +66,42 @@ func main() {
 }
 ```
 
-#### 高级配置
+#### Advanced Configuration
 
 ```go
-// 创建自定义内存池
+// Create custom memory pool
 pool := performance.NewMemoryPool()
 
-// 注册自定义对象池
+// Register custom object pool
 pool.RegisterObjectPool("CustomMessage", 
     func() interface{} { return &CustomMessage{} },
     func(obj interface{}) { obj.(*CustomMessage).Reset() })
 
-// 获取自定义对象
+// Get custom object
 customMsg := pool.GetObject("CustomMessage").(*CustomMessage)
 defer pool.PutObject("CustomMessage", customMsg, nil)
 ```
 
-### 性能收益
+### Performance Benefits
 
-- **内存分配减少**：90%以上的内存分配可以通过池复用
-- **GC压力降低**：GC频率减少60-80%
-- **延迟优化**：内存分配延迟降低50-70%
+- **Memory Allocation Reduction**: 90%+ of memory allocations can be reused through pooling
+- **GC Pressure Reduction**: GC frequency reduced by 60-80%
+- **Latency Optimization**: Memory allocation latency reduced by 50-70%
 
-## 批量处理优化
+## Batch Processing Optimization
 
-### 功能特性
+### Features
 
-批量处理模块提供了以下功能：
+The batch processing module provides the following features:
 
-- **批量消息发送**：将多个消息合并发送，提高吞吐量
-- **批量消息消费**：批量处理接收到的消息
-- **批量存储操作**：批量写入存储，减少IO操作
-- **自适应批量大小**：根据系统负载动态调整批量大小
+- **Batch Message Sending**: Combine multiple messages for efficient transmission
+- **Batch Message Consumption**: Process received messages in batches
+- **Batch Storage Operations**: Batch write to storage to reduce IO operations
+- **Adaptive Batch Size**: Dynamically adjust batch size based on system load
 
-### 使用方法
+### Usage
 
-#### 批量发送器
+#### Batch Sender
 
 ```go
 package main
@@ -112,30 +112,30 @@ import (
 )
 
 func main() {
-    // 配置批量处理参数
+    // Configure batch processing parameters
     config := performance.BatchConfig{
-        BatchSize:     100,                    // 批量大小
-        FlushInterval: 10 * time.Millisecond, // 刷新间隔
-        MaxRetries:    3,                     // 最大重试次数
-        RetryDelay:    50 * time.Millisecond, // 重试延迟
-        BufferSize:    1000,                  // 缓冲区大小
+        BatchSize:     100,                    // Batch size
+        FlushInterval: 10 * time.Millisecond, // Flush interval
+        MaxRetries:    3,                     // Maximum retry attempts
+        RetryDelay:    50 * time.Millisecond, // Retry delay
+        BufferSize:    1000,                  // Buffer size
     }
     
-    // 创建发送函数
+    // Create send function
     sendFunc := func(messages []*performance.Message) error {
-        // 实际的批量发送逻辑
+        // Actual batch sending logic
         for _, msg := range messages {
-            // 发送消息
+            // Send message
         }
         return nil
     }
     
-    // 创建批量发送器
+    // Create batch sender
     sender := performance.NewBatchSender(config, sendFunc)
     sender.Start()
     defer sender.Stop()
     
-    // 发送消息
+    // Send messages
     for i := 0; i < 1000; i++ {
         msg := &performance.Message{
             Topic: "test-topic",
@@ -146,71 +146,71 @@ func main() {
 }
 ```
 
-#### 批量接收器
+#### Batch Receiver
 
 ```go
-// 创建接收函数
+// Create receive function
 receiveFunc := func(messages []*performance.Message) error {
-    // 批量处理消息
+    // Batch process messages
     for _, msg := range messages {
-        // 处理消息逻辑
+        // Process message logic
         fmt.Printf("Processing message: %s\n", string(msg.Body))
     }
     return nil
 }
 
-// 创建批量接收器
+// Create batch receiver
 receiver := performance.NewBatchReceiver(config, receiveFunc)
 receiver.Start()
 defer receiver.Stop()
 
-// 接收消息
+// Receive messages
 for _, msg := range incomingMessages {
     receiver.Receive(msg)
 }
 ```
 
-#### 批量管理器
+#### Batch Manager
 
 ```go
-// 获取全局批量管理器
+// Get global batch manager
 manager := performance.GetGlobalBatchManager()
 
-// 注册发送器和接收器
+// Register senders and receivers
 manager.RegisterSender("producer-1", sender)
 manager.RegisterReceiver("consumer-1", receiver)
 
-// 启动所有处理器
+// Start all processors
 manager.StartAll()
 defer manager.StopAll()
 
-// 获取性能指标
+// Get performance metrics
 metrics := manager.GetAllMetrics()
 for name, metric := range metrics {
     fmt.Printf("%s: %+v\n", name, metric)
 }
 ```
 
-### 性能收益
+### Performance Benefits
 
-- **吞吐量提升**：批量处理可提升吞吐量3-5倍
-- **延迟优化**：减少网络往返次数，降低平均延迟
-- **资源利用率**：更好的CPU和网络资源利用
+- **Throughput Improvement**: Batch processing can improve throughput by 3-5x
+- **Latency Optimization**: Reduce network round trips, lower average latency
+- **Resource Utilization**: Better CPU and network resource utilization
 
-## 网络性能优化
+## Network Performance Optimization
 
-### 功能特性
+### Features
 
-网络优化模块提供了以下功能：
+The network optimization module provides the following features:
 
-- **连接池**：复用网络连接，减少连接建立开销
-- **多路复用**：单个连接支持多个数据流
-- **压缩传输**：支持gzip压缩，减少网络传输量
-- **异步IO**：非阻塞IO操作，提高并发性能
+- **Connection Pool**: Reuse network connections to reduce connection establishment overhead
+- **Multiplexing**: Single connection supports multiple data streams
+- **Compressed Transmission**: Support gzip compression to reduce network transmission
+- **Async IO**: Non-blocking IO operations to improve concurrent performance
 
-### 使用方法
+### Usage
 
-#### 连接池配置
+#### Connection Pool Configuration
 
 ```go
 package main
@@ -221,39 +221,39 @@ import (
 )
 
 func main() {
-    // 配置连接池
+    // Configure connection pool
     config := performance.ConnectionPoolConfig{
-        MaxConnections:    100,                // 最大连接数
-        MaxIdleTime:       30 * time.Minute,  // 最大空闲时间
-        ConnectTimeout:    5 * time.Second,   // 连接超时
-        ReadTimeout:       30 * time.Second,  // 读取超时
-        WriteTimeout:      30 * time.Second,  // 写入超时
-        KeepAlive:         true,              // 保持连接
-        TCPNoDelay:        true,              // TCP无延迟
-        EnableCompression: true,              // 启用压缩
+        MaxConnections:    100,                // Maximum connections
+        MaxIdleTime:       30 * time.Minute,  // Maximum idle time
+        ConnectTimeout:    5 * time.Second,   // Connection timeout
+        ReadTimeout:       30 * time.Second,  // Read timeout
+        WriteTimeout:      30 * time.Second,  // Write timeout
+        KeepAlive:         true,              // Keep alive
+        TCPNoDelay:        true,              // TCP no delay
+        EnableCompression: true,              // Enable compression
     }
     
-    // 创建连接池
+    // Create connection pool
     pool := performance.NewConnectionPool("localhost:9876", config)
     
-    // 获取连接
+    // Get connection
     conn, err := pool.Get()
     if err != nil {
         panic(err)
     }
     defer pool.Put(conn)
     
-    // 使用连接
+    // Use connection
     data := []byte("Hello, RocketMQ!")
     
-    // 普通写入
+    // Normal write
     conn.Write(data)
     conn.Flush()
     
-    // 压缩写入
+    // Compressed write
     conn.WriteCompressed(data)
     
-    // 读取数据
+    // Read data
     buffer := make([]byte, 1024)
     n, err := conn.Read(buffer)
     if err != nil {
@@ -264,21 +264,21 @@ func main() {
 }
 ```
 
-#### 网络优化器
+#### Network Optimizer
 
 ```go
-// 获取全局网络优化器
+// Get global network optimizer
 optimizer := performance.GetGlobalNetworkOptimizer()
 
-// 注册连接池
+// Register connection pools
 optimizer.RegisterConnectionPool("nameserver", "localhost:9876", config)
 optimizer.RegisterConnectionPool("broker", "localhost:10911", config)
 
-// 获取连接池
+// Get connection pool
 nameserverPool := optimizer.GetConnectionPool("nameserver")
 brokerPool := optimizer.GetConnectionPool("broker")
 
-// 使用连接池
+// Use connection pool
 conn, err := nameserverPool.Get()
 if err != nil {
     panic(err)
@@ -286,15 +286,15 @@ if err != nil {
 defer nameserverPool.Put(conn)
 ```
 
-#### 异步IO
+#### Async IO
 
 ```go
-// 创建异步IO管理器
-asyncManager := performance.NewAsyncIOManager(10) // 10个工作器
+// Create async IO manager
+asyncManager := performance.NewAsyncIOManager(10) // 10 workers
 asyncManager.Start()
 defer asyncManager.Stop()
 
-// 提交异步写入任务
+// Submit async write task
 task := &performance.AsyncTask{
     Type: "write",
     Data: []byte("async message"),
@@ -315,26 +315,26 @@ if err != nil {
 }
 ```
 
-### 性能收益
+### Performance Benefits
 
-- **连接复用**：减少连接建立开销90%以上
-- **并发性能**：异步IO提升并发处理能力5-10倍
-- **网络传输**：压缩传输减少网络流量30-50%
+- **Connection Reuse**: Reduce connection establishment overhead by 90%+
+- **Concurrent Performance**: Async IO improves concurrent processing capability by 5-10x
+- **Network Transmission**: Compressed transmission reduces network traffic by 30-50%
 
-## 性能监控
+## Performance Monitoring
 
-### 功能特性
+### Features
 
-性能监控模块提供了以下功能：
+The performance monitoring module provides the following features:
 
-- **实时指标收集**：CPU、内存、网络、业务指标
-- **HTTP监控接口**：RESTful API获取监控数据
-- **告警管理**：基于规则的告警系统
-- **性能分析**：详细的性能分析报告
+- **Real-time Metrics Collection**: CPU, memory, network, business metrics
+- **HTTP Monitoring Interface**: RESTful API to get monitoring data
+- **Alert Management**: Rule-based alert system
+- **Performance Analysis**: Detailed performance analysis reports
 
-### 使用方法
+### Usage
 
-#### 基础监控
+#### Basic Monitoring
 
 ```go
 package main
@@ -345,58 +345,58 @@ import (
 )
 
 func main() {
-    // 配置监控
+    // Configure monitoring
     config := performance.MonitorConfig{
-        CollectInterval: 10 * time.Second, // 收集间隔
-        HTTPPort:        8080,             // HTTP服务端口
-        EnableHTTP:      true,             // 启用HTTP服务
-        MetricsPath:     "/metrics",       // 指标路径
+        CollectInterval: 10 * time.Second, // Collection interval
+        HTTPPort:        8080,             // HTTP service port
+        EnableHTTP:      true,             // Enable HTTP service
+        MetricsPath:     "/metrics",       // Metrics path
     }
     
-    // 创建性能监控器
+    // Create performance monitor
     monitor := performance.NewPerformanceMonitor(config)
     
-    // 注册组件
+    // Register components
     monitor.RegisterMemoryPool(performance.GlobalMemoryPool)
     monitor.RegisterBatchManager(performance.GlobalBatchManager)
     monitor.RegisterNetworkOptimizer(performance.GlobalNetworkOptimizer)
     
-    // 启动监控
+    // Start monitoring
     monitor.Start()
     defer monitor.Stop()
     
-    // 获取指标
+    // Get metrics
     metrics := monitor.GetAllMetrics()
     fmt.Printf("Current metrics: %+v\n", metrics)
 }
 ```
 
-#### HTTP监控接口
+#### HTTP Monitoring Interface
 
-启动监控后，可以通过以下HTTP接口获取监控数据：
+After starting monitoring, you can get monitoring data through the following HTTP interfaces:
 
-- `GET /metrics` - 获取所有性能指标
-- `GET /health` - 获取健康状态
-- `GET /debug` - 获取调试信息
+- `GET /metrics` - Get all performance metrics
+- `GET /health` - Get health status
+- `GET /debug` - Get debug information
 
 ```bash
-# 获取性能指标
+# Get performance metrics
 curl http://localhost:8080/metrics
 
-# 获取健康状态
+# Get health status
 curl http://localhost:8080/health
 
-# 获取调试信息
+# Get debug information
 curl http://localhost:8080/debug
 ```
 
-#### 告警配置
+#### Alert Configuration
 
 ```go
-// 创建告警管理器
+// Create alert manager
 alertManager := performance.NewAlertManager(monitor)
 
-// 添加告警规则
+// Add alert rules
 alertManager.AddRule(performance.AlertRule{
     Name:        "HighMemoryUsage",
     MetricName:  "memory.usage",
@@ -417,72 +417,72 @@ alertManager.AddRule(performance.AlertRule{
     Severity:    "critical",
 })
 
-// 添加告警处理器
+// Add alert handlers
 alertManager.AddHandler(&performance.LogAlertHandler{})
 
-// 启动告警管理器
+// Start alert manager
 alertManager.Start()
 defer alertManager.Stop()
 ```
 
-### 监控指标
+### Monitoring Metrics
 
-#### 系统指标
+#### System Metrics
 
-- `goroutines`: 当前Goroutine数量
-- `memory_alloc`: 当前分配的内存
-- `memory_sys`: 系统内存使用量
-- `gc_count`: GC次数
-- `gc_pause_total`: GC暂停总时间
+- `goroutines`: Current number of Goroutines
+- `memory_alloc`: Currently allocated memory
+- `memory_sys`: System memory usage
+- `gc_count`: Number of GCs
+- `gc_pause_total`: Total GC pause time
 
-#### 内存池指标
+#### Memory Pool Metrics
 
-- `buffer_allocations`: 缓冲区分配次数
-- `buffer_deallocations`: 缓冲区释放次数
-- `pool_hits`: 池命中次数
-- `pool_misses`: 池未命中次数
-- `hit_rate`: 命中率
+- `buffer_allocations`: Number of buffer allocations
+- `buffer_deallocations`: Number of buffer deallocations
+- `pool_hits`: Pool hit count
+- `pool_misses`: Pool miss count
+- `hit_rate`: Hit rate
 
-#### 批量处理指标
+#### Batch Processing Metrics
 
-- `total_items`: 总处理项目数
-- `total_batches`: 总批次数
-- `successful_items`: 成功处理项目数
-- `failed_items`: 失败处理项目数
-- `avg_batch_size`: 平均批次大小
-- `avg_process_time`: 平均处理时间
+- `total_items`: Total processed items
+- `total_batches`: Total batches
+- `successful_items`: Successfully processed items
+- `failed_items`: Failed processed items
+- `avg_batch_size`: Average batch size
+- `avg_process_time`: Average processing time
 
-#### 网络指标
+#### Network Metrics
 
-- `total_connections`: 总连接数
-- `active_connections`: 活跃连接数
-- `bytes_read`: 读取字节数
-- `bytes_written`: 写入字节数
-- `compressed_bytes`: 压缩字节数
-- `avg_latency`: 平均延迟
+- `total_connections`: Total connections
+- `active_connections`: Active connections
+- `bytes_read`: Bytes read
+- `bytes_written`: Bytes written
+- `compressed_bytes`: Compressed bytes
+- `avg_latency`: Average latency
 
-## 基准测试
+## Benchmark Testing
 
-### 运行基准测试
+### Running Benchmark Tests
 
 ```bash
-# 运行所有基准测试
+# Run all benchmark tests
 go test -bench=. ./pkg/performance/
 
-# 运行特定基准测试
+# Run specific benchmark tests
 go test -bench=BenchmarkMemoryPool ./pkg/performance/
 
-# 运行基准测试并生成性能报告
+# Run benchmark tests and generate performance reports
 go test -bench=. -benchmem -cpuprofile=cpu.prof -memprofile=mem.prof ./pkg/performance/
 
-# 对比基准测试结果
+# Compare benchmark test results
 go test -bench=. ./pkg/performance/ > before.txt
-# 进行优化后
+# After optimization
 go test -bench=. ./pkg/performance/ > after.txt
 benchcmp before.txt after.txt
 ```
 
-### 基准测试结果示例
+### Benchmark Test Results Example
 
 ```
 BenchmarkMemoryPool/GetBuffer_Small-8         	10000000	       120 ns/op	       0 B/op	       0 allocs/op
@@ -497,19 +497,19 @@ BenchmarkBatchProcessor/AddItems-8            	10000000	       150 ns/op	      2
 BenchmarkBatchProcessor/AddItems_Concurrent-8 	 8000000	       200 ns/op	      24 B/op	       1 allocs/op
 ```
 
-### 性能回归测试
+### Performance Regression Testing
 
 ```go
-// 在CI/CD中运行性能回归测试
+// Run performance regression tests in CI/CD
 func TestPerformanceRegression(t *testing.T) {
-    // 设置性能基准
+    // Set performance baselines
     benchmarks := map[string]time.Duration{
         "memory_pool_10k_ops": 100 * time.Millisecond,
         "batch_process_1k_items": 50 * time.Millisecond,
         "network_1k_connections": 200 * time.Millisecond,
     }
     
-    // 运行性能测试
+    // Run performance tests
     for name, threshold := range benchmarks {
         duration := runPerformanceTest(name)
         if duration > threshold {
@@ -519,70 +519,70 @@ func TestPerformanceRegression(t *testing.T) {
 }
 ```
 
-## 最佳实践
+## Best Practices
 
-### 内存管理最佳实践
+### Memory Management Best Practices
 
-1. **合理使用内存池**
+1. **Use Memory Pools Appropriately**
    ```go
-   // 好的做法：使用defer确保资源释放
+   // Good practice: Use defer to ensure resource release
    buf := performance.GetBuffer(size)
    defer performance.PutBuffer(buf)
    
-   // 避免：忘记释放资源
+   // Avoid: Forgetting to release resources
    buf := performance.GetBuffer(size)
-   // 忘记调用 PutBuffer
+   // Forgot to call PutBuffer
    ```
 
-2. **选择合适的缓冲区大小**
+2. **Choose Appropriate Buffer Sizes**
    ```go
-   // 好的做法：根据实际需要选择大小
-   smallBuf := performance.GetBuffer(64)   // 小消息
-   mediumBuf := performance.GetBuffer(1024) // 中等消息
-   largeBuf := performance.GetBuffer(16384) // 大消息
+   // Good practice: Choose size based on actual needs
+   smallBuf := performance.GetBuffer(64)   // Small messages
+   mediumBuf := performance.GetBuffer(1024) // Medium messages
+   largeBuf := performance.GetBuffer(16384) // Large messages
    
-   // 避免：总是使用过大的缓冲区
-   buf := performance.GetBuffer(65536) // 对于小消息来说太大了
+   // Avoid: Always using oversized buffers
+   buf := performance.GetBuffer(65536) // Too large for small messages
    ```
 
-3. **复用消息对象**
+3. **Reuse Message Objects**
    ```go
-   // 好的做法：复用消息对象
+   // Good practice: Reuse message objects
    msg := performance.GetMessage()
    defer performance.PutMessage(msg)
    
    msg.Topic = "new-topic"
    msg.Body = newBody
    
-   // 避免：频繁创建新对象
-   msg := &performance.Message{} // 每次都创建新对象
+   // Avoid: Frequently creating new objects
+   msg := &performance.Message{} // Creating new object every time
    ```
 
-### 批量处理最佳实践
+### Batch Processing Best Practices
 
-1. **合理设置批量大小**
+1. **Set Appropriate Batch Sizes**
    ```go
-   // 根据消息大小和网络条件调整
+   // Adjust based on message size and network conditions
    config := performance.BatchConfig{
-       BatchSize: 100,  // 小消息可以设置较大的批量
-       // BatchSize: 10, // 大消息应该设置较小的批量
+       BatchSize: 100,  // Large batch for small messages
+       // BatchSize: 10, // Small batch for large messages
    }
    ```
 
-2. **设置合适的刷新间隔**
+2. **Set Appropriate Flush Intervals**
    ```go
    config := performance.BatchConfig{
-       FlushInterval: 10 * time.Millisecond, // 低延迟场景
-       // FlushInterval: 100 * time.Millisecond, // 高吞吐场景
+       FlushInterval: 10 * time.Millisecond, // Low latency scenarios
+       // FlushInterval: 100 * time.Millisecond, // High throughput scenarios
    }
    ```
 
-3. **处理批量操作错误**
+3. **Handle Batch Operation Errors**
    ```go
    handler := performance.BatchHandlerFunc(func(items []interface{}) error {
        for i, item := range items {
            if err := processItem(item); err != nil {
-               // 记录失败的项目，继续处理其他项目
+               // Log failed items, continue processing other items
                log.Printf("Failed to process item %d: %v", i, err)
            }
        }
@@ -590,39 +590,39 @@ func TestPerformanceRegression(t *testing.T) {
    })
    ```
 
-### 网络优化最佳实践
+### Network Optimization Best Practices
 
-1. **合理配置连接池**
+1. **Configure Connection Pools Appropriately**
    ```go
    config := performance.ConnectionPoolConfig{
-       MaxConnections: 100,              // 根据并发需求设置
-       MaxIdleTime:    30 * time.Minute, // 根据网络稳定性设置
-       ConnectTimeout: 5 * time.Second,  // 不要设置过长
-       ReadTimeout:    30 * time.Second, // 根据业务需求设置
+       MaxConnections: 100,              // Set based on concurrency needs
+       MaxIdleTime:    30 * time.Minute, // Set based on network stability
+       ConnectTimeout: 5 * time.Second,  // Don't set too long
+       ReadTimeout:    30 * time.Second, // Set based on business needs
        WriteTimeout:   30 * time.Second,
    }
    ```
 
-2. **选择性使用压缩**
+2. **Use Compression Selectively**
    ```go
-   // 对于大数据传输启用压缩
+   // Enable compression for large data transmission
    if len(data) > 1024 {
        conn.WriteCompressed(data)
    } else {
-       conn.Write(data) // 小数据不需要压缩
+       conn.Write(data) // No compression needed for small data
    }
    ```
 
-3. **正确使用异步IO**
+3. **Use Async IO Correctly**
    ```go
-   // 对于非关键路径使用异步IO
+   // Use async IO for non-critical paths
    task := &performance.AsyncTask{
        Type: "write",
        Data: logData,
        Conn: logConn,
        Callback: func(data []byte, err error) {
            if err != nil {
-               // 异步处理错误
+               // Handle errors asynchronously
                handleAsyncError(err)
            }
        },
@@ -630,19 +630,19 @@ func TestPerformanceRegression(t *testing.T) {
    asyncManager.SubmitTask(task)
    ```
 
-### 监控最佳实践
+### Monitoring Best Practices
 
-1. **设置合理的监控间隔**
+1. **Set Appropriate Monitoring Intervals**
    ```go
    config := performance.MonitorConfig{
-       CollectInterval: 10 * time.Second, // 生产环境
-       // CollectInterval: 1 * time.Second, // 调试环境
+       CollectInterval: 10 * time.Second, // Production environment
+       // CollectInterval: 1 * time.Second, // Debug environment
    }
    ```
 
-2. **配置有意义的告警规则**
+2. **Configure Meaningful Alert Rules**
    ```go
-   // 基于业务指标设置告警
+   // Set alerts based on business metrics
    alertManager.AddRule(performance.AlertRule{
        Name:        "HighLatency",
        MetricName:  "avg_latency",
@@ -653,9 +653,9 @@ func TestPerformanceRegression(t *testing.T) {
    })
    ```
 
-3. **定期分析性能数据**
+3. **Regularly Analyze Performance Data**
    ```go
-   // 定期导出性能数据进行分析
+   // Regularly export performance data for analysis
    go func() {
        ticker := time.NewTicker(1 * time.Hour)
        for range ticker.C {
@@ -665,35 +665,35 @@ func TestPerformanceRegression(t *testing.T) {
    }()
    ```
 
-## 性能调优建议
+## Performance Tuning Recommendations
 
-### 系统级调优
+### System-Level Tuning
 
-1. **操作系统参数**
+1. **Operating System Parameters**
    ```bash
-   # 增加文件描述符限制
+   # Increase file descriptor limit
    ulimit -n 65536
    
-   # 调整TCP参数
+   # Adjust TCP parameters
    echo 'net.core.somaxconn = 65535' >> /etc/sysctl.conf
    echo 'net.ipv4.tcp_max_syn_backlog = 65535' >> /etc/sysctl.conf
    sysctl -p
    ```
 
-2. **Go运行时参数**
+2. **Go Runtime Parameters**
    ```bash
-   # 设置GC目标百分比
+   # Set GC target percentage
    export GOGC=100
    
-   # 设置最大处理器数
+   # Set maximum processors
    export GOMAXPROCS=8
    ```
 
-### 应用级调优
+### Application-Level Tuning
 
-1. **内存调优**
+1. **Memory Tuning**
    ```go
-   // 预热内存池
+   // Warm up memory pools
    func warmupMemoryPool() {
        pool := performance.GetGlobalMemoryPool()
        for _, size := range []int{64, 256, 1024, 4096, 16384} {
@@ -705,67 +705,67 @@ func TestPerformanceRegression(t *testing.T) {
    }
    ```
 
-2. **批量处理调优**
+2. **Batch Processing Tuning**
    ```go
-   // 根据系统负载动态调整批量大小
+   // Dynamically adjust batch size based on system load
    func adaptiveBatchSize(currentLoad float64) int {
        if currentLoad > 0.8 {
-           return 50  // 高负载时减小批量
+           return 50  // Reduce batch size under high load
        } else if currentLoad < 0.3 {
-           return 200 // 低负载时增大批量
+           return 200 // Increase batch size under low load
        }
-       return 100 // 默认批量大小
+       return 100 // Default batch size
    }
    ```
 
-3. **网络调优**
+3. **Network Tuning**
    ```go
-   // 根据网络延迟调整超时时间
+   // Adjust timeouts based on network latency
    func adaptiveTimeout(avgLatency time.Duration) time.Duration {
-       return avgLatency * 3 // 设置为平均延迟的3倍
+       return avgLatency * 3 // Set to 3x average latency
    }
    ```
 
-### 监控和诊断
+### Monitoring and Diagnostics
 
-1. **性能分析**
+1. **Performance Analysis**
    ```bash
-   # CPU性能分析
+   # CPU performance analysis
    go tool pprof http://localhost:8080/debug/pprof/profile
    
-   # 内存性能分析
+   # Memory performance analysis
    go tool pprof http://localhost:8080/debug/pprof/heap
    
-   # Goroutine分析
+   # Goroutine analysis
    go tool pprof http://localhost:8080/debug/pprof/goroutine
    ```
 
-2. **性能基准对比**
+2. **Performance Benchmark Comparison**
    ```bash
-   # 使用benchstat对比性能
+   # Use benchstat to compare performance
    go get golang.org/x/perf/cmd/benchstat
    benchstat before.txt after.txt
    ```
 
-3. **持续性能监控**
+3. **Continuous Performance Monitoring**
    ```go
-   // 集成到监控系统
+   // Integrate with monitoring systems
    func exportToPrometheus(metrics map[string]interface{}) {
-       // 导出到Prometheus
+       // Export to Prometheus
    }
    
    func exportToInfluxDB(metrics map[string]interface{}) {
-       // 导出到InfluxDB
+       // Export to InfluxDB
    }
    ```
 
-## 总结
+## Summary
 
-Go-RocketMQ的性能优化涵盖了内存管理、批量处理、网络优化和监控等多个方面。通过合理使用这些优化特性，可以显著提升系统的性能表现：
+Go-RocketMQ's performance optimization covers multiple aspects including memory management, batch processing, network optimization, and monitoring. By properly using these optimization features, you can significantly improve system performance:
 
-- **内存优化**：减少90%以上的内存分配，降低60-80%的GC压力
-- **批量处理**：提升3-5倍的吞吐量，降低平均延迟
-- **网络优化**：减少90%以上的连接开销，提升5-10倍的并发性能
-- **监控系统**：提供全面的性能可观测性，支持实时告警和性能分析
+- **Memory Optimization**: Reduce 90%+ of memory allocations, reduce 60-80% of GC pressure
+- **Batch Processing**: Improve throughput by 3-5x, reduce average latency
+- **Network Optimization**: Reduce 90%+ of connection overhead, improve concurrent performance by 5-10x
+- **Monitoring System**: Provide comprehensive performance observability, support real-time alerts and performance analysis
 
-在实际使用中，建议根据具体的业务场景和性能需求，选择合适的优化策略和配置参数。同时，通过持续的性能监控和基准测试，确保系统始终保持最佳的性能状态。
+In practical use, it is recommended to select appropriate optimization strategies and configuration parameters based on specific business scenarios and performance requirements. At the same time, through continuous performance monitoring and benchmark testing, ensure that the system always maintains optimal performance.

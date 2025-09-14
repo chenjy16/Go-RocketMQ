@@ -229,8 +229,8 @@ import "github.com/chenjy16/go-rocketmq-client"
 
 ### 1. Clone the project
 ```bash
-git clone --recurse-submodules https://github.com/your-org/go-rocketmq.git
-cd go-rocketmq
+git clone --recurse-submodules https://github.com/chenjy16/Go-RocketMQ.git
+cd Go-RocketMQ
 ```
 
 ### 2. Initialize submodules (if not using --recurse-submodules)

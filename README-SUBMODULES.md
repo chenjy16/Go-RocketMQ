@@ -28,11 +28,11 @@ When cloning the repository, you need to initialize and update the submodules:
 
 ```bash
 # Clone with submodules
-git clone --recurse-submodules https://github.com/your-org/go-rocketmq.git
+git clone --recurse-submodules https://github.com/chenjy16/Go-RocketMQ.git
 
 # Or initialize submodules after cloning
-git clone https://github.com/your-org/go-rocketmq.git
-cd go-rocketmq
+git clone https://github.com/chenjy16/Go-RocketMQ.git
+cd Go-RocketMQ
 git submodule init
 git submodule update
 ```
@@ -122,7 +122,7 @@ If you're primarily working on submodule code:
 
 4. **Update the main repository** to use the new submodule version:
    ```bash
-   cd go-rocketmq
+   cd Go-RocketMQ
    git submodule update --remote
    git add pkg/common
    git commit -m "Update common submodule to latest version"
