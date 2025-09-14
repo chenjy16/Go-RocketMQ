@@ -9,7 +9,6 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 )
 
-
-replace github.com/chenjy16/go-rocketmq-common => ./pkg/common
-
-replace github.com/chenjy16/go-rocketmq-remoting => ./pkg/remoting
+// These dependencies are managed as Git submodules.
+// The github.com/chenjy16/go-rocketmq-common and github.com/chenjy16/go-rocketmq-remoting
+// modules are integrated as submodules in the pkg/common and pkg/remoting directories.

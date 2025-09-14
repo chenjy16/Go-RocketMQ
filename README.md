@@ -85,7 +85,7 @@ Go-RocketMQ follows a modular design where core components are separated into in
 2. **Common Module** (`github.com/chenjy16/go-rocketmq-common`): Contains shared data structures and utilities
 3. **Client Module** (`github.com/chenjy16/go-rocketmq-client`): Provides producer and consumer implementations
 
-These modules can be used independently or together as submodules. See [README-SUBMODULES.md](README-SUBMODULES.md) for detailed setup instructions.
+These modules are integrated as Git submodules in the main repository. See [Submodule Guide](README-SUBMODULES.md) for detailed setup instructions.
 
 ## Core Components
 
@@ -229,16 +229,21 @@ import "github.com/chenjy16/go-rocketmq-client"
 
 ### 1. Clone the project
 ```bash
-git clone https://github.com/your-org/go-rocketmq.git
+git clone --recurse-submodules https://github.com/your-org/go-rocketmq.git
 cd go-rocketmq
 ```
 
-### 2. Install dependencies
+### 2. Initialize submodules (if not using --recurse-submodules)
+```bash
+./scripts/setup-submodules.sh
+```
+
+### 3. Install dependencies
 ```bash
 go mod tidy
 ```
 
-### 3. Build the project
+### 4. Build the project
 ```bash
 make build
 ```
