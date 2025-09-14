@@ -85,7 +85,76 @@ Go-RocketMQ follows a modular design where core components are separated into in
 2. **Common Module** (`github.com/chenjy16/go-rocketmq-common`): Contains shared data structures and utilities
 3. **Client Module** (`github.com/chenjy16/go-rocketmq-client`): Provides producer and consumer implementations
 
-These modules are integrated as Git submodules in the main repository. See [Submodule Guide](README-SUBMODULES.md) for detailed setup instructions.
+These modules are integrated as Git submodules in the main repository. See [Submodule Guide](README-SUBMODULES.md) for detailed setup and management instructions.
+
+#### Git Submodule Management
+
+Go-RocketMQ uses Git submodules to manage its modular architecture, allowing for independent development of core components while maintaining a cohesive project structure.
+
+##### Submodule Structure
+
+The submodules are located in the `pkg/` directory:
+
+```
+go-rocketmq/
+├── pkg/
+│   ├── common/     # Submodule: github.com/chenjy16/go-rocketmq-common
+│   └── remoting/   # Submodule: github.com/chenjy16/go-rocketmq-remoting
+```
+
+##### Cloning with Submodules
+
+When cloning the repository, you need to initialize and update the submodules:
+
+```bash
+# Clone with submodules
+git clone --recurse-submodules https://github.com/chenjy16/Go-RocketMQ.git
+
+# Or initialize submodules after cloning
+git clone https://github.com/chenjy16/Go-RocketMQ.git
+cd Go-RocketMQ
+git submodule init
+git submodule update
+```
+
+##### Updating Submodules
+
+To update submodules to their latest versions:
+
+```bash
+# Update all submodules to the latest commit
+git submodule update --remote
+
+# Update specific submodule
+git submodule update --remote pkg/common
+git submodule update --remote pkg/remoting
+```
+
+##### Working with Submodules
+
+If you need to make changes to code in a submodule:
+
+1. Make sure you have write access to the submodule repository
+2. Navigate to the submodule directory:
+   ```bash
+   cd pkg/common
+   ```
+3. Make your changes and commit them:
+   ```bash
+   # Make changes to files
+   git add .
+   git commit -m "Your changes"
+   git push origin master
+   ```
+4. Return to the main repository and update the submodule reference:
+   ```bash
+   cd ../..
+   git add pkg/common
+   git commit -m "Update common submodule"
+   git push
+   ```
+
+For more detailed information about submodule management, see [README-SUBMODULES.md](README-SUBMODULES.md).
 
 ## Core Components
 
@@ -930,11 +999,58 @@ Go-RocketMQ includes comprehensive performance optimization features designed fo
 - **Zero-Copy Buffer**: Minimize memory copying operations
 - **Performance Gain**: 90%+ reduction in memory allocations, 70%+ reduction in GC pressure
 
+##### Memory Pool Usage
+
+```go
+package main
+
+import (
+    "github.com/apache/rocketmq-client-go/v2/pkg/performance"
+)
+
+func main() {
+    // Initialize global memory pools
+    performance.InitGlobalPools()
+    
+    // Get buffer
+    buf := performance.GetBuffer(1024)
+    defer performance.PutBuffer(buf)
+    
+    // Use buffer
+    copy(buf, []byte("Hello, World!"))
+    
+    // Get message object
+    msg := performance.GetMessage()
+    defer performance.PutMessage(msg)
+    
+    msg.Topic = "test-topic"
+    msg.Body = buf
+}
+```
+
 #### 2. Batch Processing
 - **Batch Message Sending**: Aggregate multiple messages for efficient transmission
 - **Batch Message Consuming**: Process messages in batches to improve throughput
 - **Configurable Batch Size**: Adjust batch size based on workload
 - **Performance Gain**: 3-5x throughput improvement, 80%+ reduction in network calls
+
+##### Batch Processing Usage
+
+```go
+// Configure batch processing parameters
+config := performance.BatchConfig{
+    BatchSize:     100,                    // Batch size
+    FlushInterval: 10 * time.Millisecond, // Flush interval
+    MaxRetries:    3,                     // Maximum retry attempts
+    RetryDelay:    50 * time.Millisecond, // Retry delay
+    BufferSize:    1000,                  // Buffer size
+}
+
+// Create batch sender
+sender := performance.NewBatchSender(config, sendFunc)
+sender.Start()
+defer sender.Stop()
+```
 
 #### 3. Network Optimization
 - **Connection Pool**: Reuse connections to reduce establishment overhead
@@ -948,6 +1064,16 @@ Go-RocketMQ includes comprehensive performance optimization features designed fo
 - **HTTP Metrics Endpoint**: Expose metrics via HTTP for monitoring tools
 - **Alert Management**: Configurable alerts for performance thresholds
 - **System Metrics**: CPU, memory, GC, and custom metrics
+
+### Performance Benchmarks
+
+| Scenario | Before Optimization | After Optimization | Improvement |
+|----------|-------------------|-------------------|-------------|
+| Message Sending | 5,000 msg/s | 15,000 msg/s | 3x |
+| Batch Sending | 8,000 msg/s | 40,000 msg/s | 5x |
+| Memory Allocations | 100,000/s | 10,000/s | -90% |
+| GC Frequency | 10/s | 3/s | -70% |
+| Network Concurrency | 1,000 conn | 10,000 conn | 10x |
 
 ### Quick Start with Performance Features
 
@@ -986,23 +1112,66 @@ func main() {
 }
 ```
 
-### Performance Benchmarks
+### Performance Best Practices
 
-| Scenario | Before Optimization | After Optimization | Improvement |
-|----------|-------------------|-------------------|-------------|
-| Message Sending | 5,000 msg/s | 15,000 msg/s | 3x |
-| Batch Sending | 8,000 msg/s | 40,000 msg/s | 5x |
-| Memory Allocations | 100,000/s | 10,000/s | -90% |
-| GC Frequency | 10/s | 3/s | -70% |
-| Network Concurrency | 1,000 conn | 10,000 conn | 10x |
+#### Memory Management Best Practices
 
-### Performance Examples
+1. **Use Memory Pools Appropriately**
+   ```go
+   // Good practice: Use defer to ensure resource release
+   buf := performance.GetBuffer(size)
+   defer performance.PutBuffer(buf)
+   ```
 
-See the [performance examples](examples/performance/) directory for detailed usage:
+2. **Choose Appropriate Buffer Sizes**
+   ```go
+   // Good practice: Choose size based on actual needs
+   smallBuf := performance.GetBuffer(64)   // Small messages
+   mediumBuf := performance.GetBuffer(1024) // Medium messages
+   largeBuf := performance.GetBuffer(16384) // Large messages
+   ```
 
-- `examples/performance/optimized/` - Complete performance optimization example
-- `examples/performance/benchmark/` - Benchmark testing tools
-- `pkg/performance/benchmark_test.go` - Performance benchmark tests
+#### Batch Processing Best Practices
+
+1. **Set Appropriate Batch Sizes**
+   ```go
+   // Adjust based on message size and network conditions
+   config := performance.BatchConfig{
+       BatchSize: 100,  // Large batch for small messages
+       // BatchSize: 10, // Small batch for large messages
+   }
+   ```
+
+2. **Set Appropriate Flush Intervals**
+   ```go
+   config := performance.BatchConfig{
+       FlushInterval: 10 * time.Millisecond, // Low latency scenarios
+       // FlushInterval: 100 * time.Millisecond, // High throughput scenarios
+   }
+   ```
+
+#### Network Optimization Best Practices
+
+1. **Configure Connection Pools Appropriately**
+   ```go
+   config := performance.ConnectionPoolConfig{
+       MaxConnections: 100,              // Set based on concurrency needs
+       MaxIdleTime:    30 * time.Minute, // Set based on network stability
+       ConnectTimeout: 5 * time.Second,  // Don't set too long
+       ReadTimeout:    30 * time.Second, // Set based on business needs
+       WriteTimeout:   30 * time.Second,
+   }
+   ```
+
+2. **Use Compression Selectively**
+   ```go
+   // Enable compression for large data transmission
+   if len(data) > 1024 {
+       conn.WriteCompressed(data)
+   } else {
+       conn.Write(data) // No compression needed for small data
+   }
+   ```
 
 For detailed performance optimization guide, see [PERFORMANCE_OPTIMIZATION.md](docs/PERFORMANCE_OPTIMIZATION.md).
 
@@ -1458,6 +1627,8 @@ Most examples use default configuration. For custom configuration, please refer 
 - View [Architecture Design Documentation](ARCHITECTURE.md)
 - Read [Quick Start Guide](QUICKSTART.md)
 - View [Project Summary](PROJECT_SUMMARY.md)
+- Read [Submodule Guide](README-SUBMODULES.md) for Git submodule management
+- Read [Performance Optimization Guide](docs/PERFORMANCE_OPTIMIZATION.md) for performance tuning
 - Submit [Issues](https://github.com/your-org/go-rocketmq/issues)
 - Participate in [Discussions](https://github.com/your-org/go-rocketmq/discussions)
 
