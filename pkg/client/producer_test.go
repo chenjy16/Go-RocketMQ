@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"go-rocketmq/pkg/remoting"
 )
 
 // TestDefaultProducerConfig 测试默认生产者配置
@@ -30,14 +32,14 @@ func TestDefaultProducerConfig(t *testing.T) {
 // TestProducerConfig 测试生产者配置结构体
 func TestProducerConfig(t *testing.T) {
 	config := &ProducerConfig{
-		GroupName:                         "test-producer-group",
-		NameServers:                       []string{"127.0.0.1:9876"},
-		SendMsgTimeout:                    5 * time.Second,
-		CompressMsgBodyOver:               4096,
-		RetryTimesWhenSendFailed:          3,
-		RetryTimesWhenSendAsyncFailed:     3,
-		RetryAnotherBrokerWhenNotStoreOK:  true,
-		MaxMessageSize:                    1024 * 1024 * 4,
+		GroupName:                        "test-producer-group",
+		NameServers:                      []string{"127.0.0.1:9876"},
+		SendMsgTimeout:                   5 * time.Second,
+		CompressMsgBodyOver:              4096,
+		RetryTimesWhenSendFailed:         3,
+		RetryTimesWhenSendAsyncFailed:    3,
+		RetryAnotherBrokerWhenNotStoreOK: true,
+		MaxMessageSize:                   1024 * 1024 * 4,
 	}
 
 	// 测试JSON序列化
@@ -154,9 +156,9 @@ func TestGetTopicRouteData(t *testing.T) {
 	producer := NewProducer("test-producer-group")
 
 	// 创建测试路由数据
-	routeData := &TopicRouteData{
+	routeData := &remoting.TopicRouteData{
 		OrderTopicConf: "",
-		QueueDatas: []*QueueData{
+		QueueDatas: []*remoting.QueueData{
 			{
 				BrokerName:     "broker-a",
 				ReadQueueNums:  4,
@@ -164,7 +166,7 @@ func TestGetTopicRouteData(t *testing.T) {
 				Perm:           6,
 			},
 		},
-		BrokerDatas: []*BrokerData{
+		BrokerDatas: []*remoting.BrokerData{
 			{
 				Cluster:     "DefaultCluster",
 				BrokerName:  "broker-a",
@@ -208,9 +210,9 @@ func TestSelectMessageQueue(t *testing.T) {
 	producer := NewProducer("test-producer-group")
 
 	// 创建测试路由数据
-	routeData := &TopicRouteData{
+	routeData := &remoting.TopicRouteData{
 		OrderTopicConf: "",
-		QueueDatas: []*QueueData{
+		QueueDatas: []*remoting.QueueData{
 			{
 				BrokerName:     "broker-a",
 				ReadQueueNums:  4,
@@ -224,7 +226,7 @@ func TestSelectMessageQueue(t *testing.T) {
 				Perm:           6,
 			},
 		},
-		BrokerDatas: []*BrokerData{
+		BrokerDatas: []*remoting.BrokerData{
 			{
 				Cluster:     "DefaultCluster",
 				BrokerName:  "broker-a",
@@ -260,10 +262,10 @@ func TestSelectMessageQueueWithEmptyRouteData(t *testing.T) {
 	producer := NewProducer("test-producer-group")
 
 	// 创建空的路由数据
-	routeData := &TopicRouteData{
+	routeData := &remoting.TopicRouteData{
 		OrderTopicConf:    "",
-		QueueDatas:        []*QueueData{},
-		BrokerDatas:       []*BrokerData{},
+		QueueDatas:        []*remoting.QueueData{},
+		BrokerDatas:       []*remoting.BrokerData{},
 		FilterServerTable: make(map[string][]string),
 	}
 
@@ -494,9 +496,9 @@ func BenchmarkGetTopicRouteData(b *testing.B) {
 	producer := NewProducer("benchmark-producer-group")
 
 	// 预先设置一些路由数据
-	routeData := &TopicRouteData{
+	routeData := &remoting.TopicRouteData{
 		OrderTopicConf: "",
-		QueueDatas: []*QueueData{
+		QueueDatas: []*remoting.QueueData{
 			{
 				BrokerName:     "broker-a",
 				ReadQueueNums:  4,
@@ -504,7 +506,7 @@ func BenchmarkGetTopicRouteData(b *testing.B) {
 				Perm:           6,
 			},
 		},
-		BrokerDatas: []*BrokerData{
+		BrokerDatas: []*remoting.BrokerData{
 			{
 				Cluster:     "DefaultCluster",
 				BrokerName:  "broker-a",
@@ -529,9 +531,9 @@ func BenchmarkSelectMessageQueue(b *testing.B) {
 	producer := NewProducer("benchmark-producer-group")
 
 	// 创建测试路由数据
-	routeData := &TopicRouteData{
+	routeData := &remoting.TopicRouteData{
 		OrderTopicConf: "",
-		QueueDatas: []*QueueData{
+		QueueDatas: []*remoting.QueueData{
 			{
 				BrokerName:     "broker-a",
 				ReadQueueNums:  4,
@@ -545,7 +547,7 @@ func BenchmarkSelectMessageQueue(b *testing.B) {
 				Perm:           6,
 			},
 		},
-		BrokerDatas: []*BrokerData{
+		BrokerDatas: []*remoting.BrokerData{
 			{
 				Cluster:     "DefaultCluster",
 				BrokerName:  "broker-a",

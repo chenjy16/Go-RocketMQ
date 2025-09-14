@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"go-rocketmq/pkg/protocol"
+	"go-rocketmq/pkg/common"
 	"go-rocketmq/pkg/remoting"
 )
 
@@ -18,7 +18,7 @@ type Producer struct {
 	started     bool
 	shutdown    chan struct{}
 	mutex       sync.RWMutex
-	routeTable  map[string]*TopicRouteData
+	routeTable  map[string]*remoting.TopicRouteData
 	routeMutex  sync.RWMutex
 	// 延时消息调度器
 	delayScheduler *DelayMessageScheduler
@@ -28,7 +28,7 @@ type Producer struct {
 	traceManager *TraceManager
 	// ACL中间件
 	aclMiddleware  *ACLMiddleware
-	remotingClient *remoting.RemotingClient
+	remotingClient *remoting.RemotingClientWrapper
 }
 
 // DelayMessageScheduler 延时消息调度器
@@ -43,6 +43,7 @@ type DelayMessageScheduler struct {
 // DelayMessageTask 延时消息任务
 type DelayMessageTask struct {
 	Message     *Message
+	SendResult  *SendResult
 	DeliverTime time.Time
 	Callback    func(*SendResult, error)
 }
@@ -308,7 +309,7 @@ func NewProducer(groupName string) *Producer {
 	p := &Producer{
 		config:         config,
 		shutdown:       make(chan struct{}),
-		routeTable:     make(map[string]*TopicRouteData),
+		routeTable:     make(map[string]*remoting.TopicRouteData),
 		remotingClient: remoting.NewRemotingClient(),
 	}
 
@@ -367,7 +368,6 @@ func (p *Producer) Start() error {
 	}
 
 	p.started = true
-	return nil
 	return nil
 }
 
@@ -610,6 +610,46 @@ func (p *Producer) SendBatchMessagesAsync(messages []*Message, callback func(*Se
 	return p.batchProcessor.AddBatchTask(messages, callback)
 }
 
+// SendBatchMessages 发送批量消息
+func (p *Producer) SendBatchMessages(messages []*Message) (*SendResult, error) {
+	if !p.started {
+		return nil, fmt.Errorf("producer not started")
+	}
+
+	if len(messages) == 0 {
+		return nil, fmt.Errorf("messages list is empty")
+	}
+
+	// 验证所有消息都属于同一个Topic
+	topic := messages[0].Topic
+	for _, msg := range messages {
+		if msg.Topic != topic {
+			return nil, fmt.Errorf("all messages in batch must have the same topic")
+		}
+	}
+
+	// 使用简单的批量消息格式：直接连接消息体
+	var batchBody []byte
+	for _, msg := range messages {
+		batchBody = append(batchBody, msg.Body...)
+	}
+
+	if len(batchBody) > int(p.config.MaxMessageSize) {
+		return nil, fmt.Errorf("batch messages size exceeds limit: %d", p.config.MaxMessageSize)
+	}
+
+	// 创建批量消息
+	batchMsg := &Message{
+		Topic:      topic,
+		Properties: make(map[string]string),
+		Body:       batchBody,
+	}
+	batchMsg.SetProperty("BATCH_MESSAGE", "true")
+	batchMsg.SetProperty("BATCH_SIZE", fmt.Sprintf("%d", len(messages)))
+
+	return p.SendSync(batchMsg)
+}
+
 // SetBatchSize 设置批量大小
 func (p *Producer) SetBatchSize(size int) {
 	p.batchProcessor.SetBatchSize(size)
@@ -621,14 +661,14 @@ func (p *Producer) SetBatchTimeout(timeout time.Duration) {
 }
 
 // getTopicRouteData 获取Topic路由数据
-func (p *Producer) getTopicRouteData(topic string) *TopicRouteData {
+func (p *Producer) getTopicRouteData(topic string) *remoting.TopicRouteData {
 	p.routeMutex.RLock()
 	defer p.routeMutex.RUnlock()
 	return p.routeTable[topic]
 }
 
 // selectMessageQueue 选择消息队列
-func (p *Producer) selectMessageQueue(routeData *TopicRouteData, topic string) *MessageQueue {
+func (p *Producer) selectMessageQueue(routeData *remoting.TopicRouteData, topic string) *common.MessageQueue {
 	if len(routeData.QueueDatas) == 0 {
 		return nil
 	}
@@ -636,7 +676,7 @@ func (p *Producer) selectMessageQueue(routeData *TopicRouteData, topic string) *
 	// 简单的轮询选择策略
 	queueData := routeData.QueueDatas[0]
 
-	return &MessageQueue{
+	return &common.MessageQueue{
 		Topic:      topic,
 		BrokerName: queueData.BrokerName,
 		QueueId:    0, // 简化选择第一个队列
@@ -644,7 +684,7 @@ func (p *Producer) selectMessageQueue(routeData *TopicRouteData, topic string) *
 }
 
 // sendMessageToQueue 发送消息到指定队列
-func (p *Producer) sendMessageToQueue(msg *Message, mq *MessageQueue, timeout time.Duration) (*SendResult, error) {
+func (p *Producer) sendMessageToQueue(msg *Message, mq *common.MessageQueue, timeout time.Duration) (*SendResult, error) {
 	// 1. 根据MessageQueue找到Broker地址
 	routeData := p.getTopicRouteData(mq.Topic)
 	if routeData == nil {
@@ -698,7 +738,7 @@ func (p *Producer) sendMessageToQueue(msg *Message, mq *MessageQueue, timeout ti
 	}
 
 	// 创建请求命令
-	request := protocol.CreateRemotingCommand(protocol.SendMessage)
+	request := remoting.CreateRemotingCommand(remoting.SendMessage)
 	request.ExtFields = properties
 	request.Body = msg.Body
 
@@ -726,7 +766,7 @@ func (p *Producer) sendMessageToQueue(msg *Message, mq *MessageQueue, timeout ti
 	result := &SendResult{
 		SendStatus:   SendOK,
 		MsgId:        msgId,
-		MessageQueue: mq,
+		MessageQueue: &MessageQueue{Topic: mq.Topic, BrokerName: mq.BrokerName, QueueId: mq.QueueId},
 		QueueOffset:  queueOffset,
 	}
 
@@ -759,8 +799,8 @@ func (p *Producer) updateRouteInfo() {
 	defer p.routeMutex.Unlock()
 
 	// 为TestTopic创建路由数据
-	testTopicRoute := &TopicRouteData{
-		QueueDatas: []*QueueData{
+	testTopicRoute := &remoting.TopicRouteData{
+		QueueDatas: []*remoting.QueueData{
 			{
 				BrokerName:     "DefaultBroker",
 				ReadQueueNums:  4,
@@ -769,7 +809,7 @@ func (p *Producer) updateRouteInfo() {
 
 			},
 		},
-		BrokerDatas: []*BrokerData{
+		BrokerDatas: []*remoting.BrokerData{
 			{
 				Cluster:    "DefaultCluster",
 				BrokerName: "DefaultBroker",
@@ -781,8 +821,8 @@ func (p *Producer) updateRouteInfo() {
 	}
 
 	// 为OrderTopic创建路由数据
-	orderTopicRoute := &TopicRouteData{
-		QueueDatas: []*QueueData{
+	orderTopicRoute := &remoting.TopicRouteData{
+		QueueDatas: []*remoting.QueueData{
 			{
 				BrokerName:     "DefaultBroker",
 				ReadQueueNums:  4,
@@ -791,7 +831,7 @@ func (p *Producer) updateRouteInfo() {
 
 			},
 		},
-		BrokerDatas: []*BrokerData{
+		BrokerDatas: []*remoting.BrokerData{
 			{
 				Cluster:    "DefaultCluster",
 				BrokerName: "DefaultBroker",
@@ -806,8 +846,8 @@ func (p *Producer) updateRouteInfo() {
 	p.routeTable["OrderTopic"] = orderTopicRoute
 
 	// 为BenchmarkTopic创建路由数据
-	benchmarkTopicRoute := &TopicRouteData{
-		QueueDatas: []*QueueData{
+	benchmarkTopicRoute := &remoting.TopicRouteData{
+		QueueDatas: []*remoting.QueueData{
 			{
 				BrokerName:     "DefaultBroker",
 				ReadQueueNums:  4,
@@ -816,7 +856,7 @@ func (p *Producer) updateRouteInfo() {
 
 			},
 		},
-		BrokerDatas: []*BrokerData{
+		BrokerDatas: []*remoting.BrokerData{
 			{
 				Cluster:    "DefaultCluster",
 				BrokerName: "DefaultBroker",

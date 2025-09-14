@@ -3,7 +3,6 @@ package client
 import (
 	"encoding/json"
 	"fmt"
-	"go-rocketmq/pkg/protocol"
 	"go-rocketmq/pkg/remoting"
 	"log"
 	"os"
@@ -42,7 +41,7 @@ type Consumer struct {
 	consumeOffsets map[string]int64
 	offsetMutex    sync.RWMutex
 	// remoting客户端
-	remotingClient *remoting.RemotingClient
+	remotingClient *remoting.RemotingClientWrapper
 	// 心跳管理
 	heartbeatTicker *time.Ticker
 	clientID        string
@@ -338,7 +337,7 @@ func (c *Consumer) getTopicRouteFromNameServer(topic string) (*TopicRouteData, e
 	}
 
 	// 构造获取路由信息的请求
-	request := protocol.CreateRemotingCommand(protocol.GetRouteInfoByTopic)
+	request := remoting.CreateRemotingCommand(remoting.GetRouteInfoByTopic)
 	request.ExtFields = map[string]string{"topic": topic}
 
 	// 使用remoting客户端发送请求
@@ -835,7 +834,7 @@ func (c *Consumer) pullMessagesFromBroker(mq *MessageQueue, offset int64) ([]*Me
 	}
 
 	// 2. 构造拉取消息请求
-	request := protocol.CreateRemotingCommand(protocol.PullMessage)
+	request := remoting.CreateRemotingCommand(remoting.PullMessage)
 	request.ExtFields = map[string]string{
 		"consumerGroup":        c.config.GroupName,
 		"topic":                mq.Topic,
@@ -897,7 +896,7 @@ func (c *Consumer) getBrokerAddr(brokerName string) (string, error) {
 }
 
 // parseMessageResponse 解析消息响应
-func (c *Consumer) parseMessageResponse(response *protocol.RemotingCommand, mq *MessageQueue) ([]*MessageExt, int64, error) {
+func (c *Consumer) parseMessageResponse(response *remoting.RemotingCommand, mq *MessageQueue) ([]*MessageExt, int64, error) {
 	// 从响应头中获取nextBeginOffset
 	nextOffsetStr, exists := response.ExtFields["nextBeginOffset"]
 	if !exists {
@@ -1117,7 +1116,7 @@ func (c *Consumer) commitOffsetToBroker(queueKey string, offset int64) error {
 	}
 
 	// 构造提交消费进度的请求
-	request := protocol.CreateRemotingCommand(protocol.RequestCode(34)) // UPDATE_CONSUMER_OFFSET
+	request := remoting.CreateRemotingCommand(remoting.RequestCode(34)) // UPDATE_CONSUMER_OFFSET
 	request.ExtFields = map[string]string{
 		"consumerGroup": c.config.GroupName,
 		"queueKey":      queueKey,
@@ -1270,7 +1269,7 @@ func (c *Consumer) sendMessageToBroker(msg *Message, topic string) error {
 	}
 
 	// 构建发送请求
-	request := protocol.CreateRemotingCommand(protocol.SendMessage)
+	request := remoting.CreateRemotingCommand(remoting.SendMessage)
 	request.ExtFields = map[string]string{
 		"topic":         msg.Topic,
 		"queueId":       fmt.Sprintf("%d", mq.QueueId),
@@ -1536,7 +1535,7 @@ func (c *Consumer) parseTagsFromExpression(expression string) []string {
 // sendHeartbeatToBrokerAddr 向指定Broker地址发送心跳
 func (c *Consumer) sendHeartbeatToBrokerAddr(brokerAddr string, heartbeatBody []byte) error {
 	// 构造心跳请求
-	request := protocol.CreateRemotingCommand(protocol.RequestCode(31)) // HEART_BEAT
+	request := remoting.CreateRemotingCommand(remoting.RequestCode(31)) // HEART_BEAT
 	request.ExtFields = map[string]string{
 		"clientID": c.getClientID(),
 	}

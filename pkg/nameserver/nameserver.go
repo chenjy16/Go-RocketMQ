@@ -14,46 +14,46 @@ import (
 
 	"go-rocketmq/pkg/acl"
 	"go-rocketmq/pkg/common"
-	"go-rocketmq/pkg/protocol"
+	"go-rocketmq/pkg/remoting"
 )
 
 // NameServer NameServer服务器
 type NameServer struct {
-	config       *Config
-	routeTable   *RouteInfoManager
-	brokerLiveTable map[string]*BrokerLiveInfo
+	config            *Config
+	routeTable        *RouteInfoManager
+	brokerLiveTable   map[string]*BrokerLiveInfo
 	filterServerTable map[string][]string
-	aclMiddleware *acl.AclMiddleware
-	mutex        sync.RWMutex
-	listener     net.Listener
-	shutdown     chan struct{}
+	aclMiddleware     *acl.AclMiddleware
+	mutex             sync.RWMutex
+	listener          net.Listener
+	shutdown          chan struct{}
 }
 
 // Config NameServer配置
 type Config struct {
-	ListenPort                int           `json:"listenPort"`
-	ClusterTestEnable         bool          `json:"clusterTestEnable"`
-	OrderMessageEnable        bool          `json:"orderMessageEnable"`
+	ListenPort                  int           `json:"listenPort"`
+	ClusterTestEnable           bool          `json:"clusterTestEnable"`
+	OrderMessageEnable          bool          `json:"orderMessageEnable"`
 	ScanNotActiveBrokerInterval time.Duration `json:"scanNotActiveBrokerInterval"`
-	AclEnable                 bool          `json:"aclEnable"`
-	AclConfigFile             string        `json:"aclConfigFile"`
+	AclEnable                   bool          `json:"aclEnable"`
+	AclConfigFile               string        `json:"aclConfigFile"`
 }
 
 // BrokerLiveInfo Broker存活信息
 type BrokerLiveInfo struct {
-	LastUpdateTimestamp time.Time `json:"lastUpdateTimestamp"`
-	DataVersion         *protocol.DataVersion `json:"dataVersion"`
-	Channel             net.Conn  `json:"-"`
-	HaServerAddr        string    `json:"haServerAddr"`
+	LastUpdateTimestamp time.Time             `json:"lastUpdateTimestamp"`
+	DataVersion         *remoting.DataVersion `json:"dataVersion"`
+	Channel             net.Conn              `json:"-"`
+	HaServerAddr        string                `json:"haServerAddr"`
 }
 
 // RouteInfoManager 路由信息管理器
 type RouteInfoManager struct {
-	topicQueueTable   map[string][]*common.MessageQueue  // topic -> queues
-	brokerAddrTable   map[string]map[int64]string        // brokerName -> {brokerId -> address}
-	clusterAddrTable  map[string][]string                // clusterName -> brokerNames
-	brokerLiveTable   map[string]*BrokerLiveInfo         // brokerAddr -> BrokerLiveInfo
-	filterServerTable map[string][]string                // brokerAddr -> filterServerList
+	topicQueueTable   map[string][]*common.MessageQueue // topic -> queues
+	brokerAddrTable   map[string]map[int64]string       // brokerName -> {brokerId -> address}
+	clusterAddrTable  map[string][]string               // clusterName -> brokerNames
+	brokerLiveTable   map[string]*BrokerLiveInfo        // brokerAddr -> BrokerLiveInfo
+	filterServerTable map[string][]string               // brokerAddr -> filterServerList
 	mutex             sync.RWMutex
 }
 
@@ -66,13 +66,13 @@ func NewNameServer(config *Config) *NameServer {
 		filterServerTable: make(map[string][]string),
 		shutdown:          make(chan struct{}),
 	}
-	
+
 	// 初始化ACL中间件
 	if config.AclEnable {
 		validator := acl.NewPlainAclValidator(config.AclConfigFile)
 		ns.aclMiddleware = acl.NewAclMiddleware(validator, true)
 	}
-	
+
 	return ns
 }
 
@@ -141,10 +141,10 @@ func (ns *NameServer) handleConnections() {
 // handleConnection 处理单个连接
 func (ns *NameServer) handleConnection(conn net.Conn) {
 	defer conn.Close()
-	
+
 	remoteAddr := conn.RemoteAddr().String()
 	log.Printf("New connection from %s", remoteAddr)
-	
+
 	// ACL权限验证
 	if ns.config.AclEnable && ns.aclMiddleware != nil {
 		if err := ns.validateConnection(conn, remoteAddr); err != nil {
@@ -152,7 +152,7 @@ func (ns *NameServer) handleConnection(conn net.Conn) {
 			return
 		}
 	}
-	
+
 	// 处理RocketMQ协议消息
 	reader := bufio.NewReader(conn)
 	for {
@@ -164,10 +164,10 @@ func (ns *NameServer) handleConnection(conn net.Conn) {
 			}
 			break
 		}
-		
+
 		// 处理请求并生成响应
 		response := ns.processRequest(request, conn)
-		
+
 		// 发送响应
 		if err := ns.writeRemotingCommand(conn, response); err != nil {
 			log.Printf("Failed to write response to %s: %v", remoteAddr, err)
@@ -183,38 +183,38 @@ func (ns *NameServer) RegisterBroker(
 	brokerName string,
 	brokerId int64,
 	haServerAddr string,
-	topicConfigWrapper *protocol.TopicConfigSerializeWrapper,
+	topicConfigWrapper *remoting.TopicConfigSerializeWrapper,
 	filterServerList []string,
 	channel net.Conn,
-) *protocol.RegisterBrokerResult {
-	
+) *remoting.RegisterBrokerResult {
+
 	// ACL权限验证
 	if ns.config.AclEnable && ns.aclMiddleware != nil {
 		remoteAddr := ""
 		if channel != nil {
 			remoteAddr = channel.RemoteAddr().String()
 		}
-		
+
 		requestData := map[string]string{
 			"clusterName": clusterName,
 			"brokerName":  brokerName,
 			"brokerAddr":  brokerAddr,
 			"operation":   "REGISTER_BROKER",
 		}
-		
+
 		if err := ns.ValidateTopicAccess(requestData, "BROKER_REGISTER", "ADMIN", remoteAddr); err != nil {
 			log.Printf("ACL validation failed for broker registration from %s: %v", remoteAddr, err)
-			return &protocol.RegisterBrokerResult{
+			return &remoting.RegisterBrokerResult{
 				HaServerAddr: "",
 				MasterAddr:   "",
 			}
 		}
 	}
-	
+
 	ns.mutex.Lock()
 	defer ns.mutex.Unlock()
 
-	result := &protocol.RegisterBrokerResult{
+	result := &remoting.RegisterBrokerResult{
 		HaServerAddr: haServerAddr,
 		MasterAddr:   brokerAddr,
 	}
@@ -225,7 +225,7 @@ func (ns *NameServer) RegisterBroker(
 	if brokerNames == nil {
 		brokerNames = make([]string, 0)
 	}
-	
+
 	// 检查brokerName是否已存在
 	found := false
 	for _, name := range brokerNames {
@@ -245,7 +245,7 @@ func (ns *NameServer) RegisterBroker(
 		brokerAddrs = make(map[int64]string)
 		ns.routeTable.brokerAddrTable[brokerName] = brokerAddrs
 	}
-	
+
 	oldAddr := brokerAddrs[brokerId]
 	if oldAddr != brokerAddr {
 		brokerAddrs[brokerId] = brokerAddr
@@ -275,16 +275,16 @@ func (ns *NameServer) RegisterBroker(
 
 	ns.routeTable.mutex.Unlock()
 
-	log.Printf("Broker registered: cluster=%s, brokerName=%s, brokerId=%d, addr=%s", 
+	log.Printf("Broker registered: cluster=%s, brokerName=%s, brokerId=%d, addr=%s",
 		clusterName, brokerName, brokerId, brokerAddr)
 
 	return result
 }
 
 // createAndUpdateQueueData 创建和更新队列数据
-func (ns *NameServer) createAndUpdateQueueData(brokerName string, topicConfig *protocol.TopicConfig) {
+func (ns *NameServer) createAndUpdateQueueData(brokerName string, topicConfig *remoting.TopicConfig) {
 	queues := make([]*common.MessageQueue, 0, topicConfig.WriteQueueNums)
-	
+
 	for i := int32(0); i < topicConfig.WriteQueueNums; i++ {
 		queue := &common.MessageQueue{
 			Topic:      topicConfig.TopicName,
@@ -293,19 +293,19 @@ func (ns *NameServer) createAndUpdateQueueData(brokerName string, topicConfig *p
 		}
 		queues = append(queues, queue)
 	}
-	
+
 	ns.routeTable.topicQueueTable[topicConfig.TopicName] = queues
 }
 
 // GetRouteInfoByTopic 根据Topic获取路由信息
-func (ns *NameServer) GetRouteInfoByTopic(topic string) *protocol.TopicRouteData {
+func (ns *NameServer) GetRouteInfoByTopic(topic string) *remoting.TopicRouteData {
 	ns.routeTable.mutex.RLock()
 	defer ns.routeTable.mutex.RUnlock()
 
-	routeData := &protocol.TopicRouteData{
-		OrderTopicConf: "",
-		QueueDatas:     make([]*protocol.QueueData, 0),
-		BrokerDatas:    make([]*protocol.BrokerData, 0),
+	routeData := &remoting.TopicRouteData{
+		OrderTopicConf:    "",
+		QueueDatas:        make([]*remoting.QueueData, 0),
+		BrokerDatas:       make([]*remoting.BrokerData, 0),
 		FilterServerTable: make(map[string][]string),
 	}
 
@@ -323,7 +323,7 @@ func (ns *NameServer) GetRouteInfoByTopic(topic string) *protocol.TopicRouteData
 
 	// 构建QueueData
 	for brokerName, qs := range brokerQueues {
-		queueData := &protocol.QueueData{
+		queueData := &remoting.QueueData{
 			BrokerName:     brokerName,
 			ReadQueueNums:  int32(len(qs)),
 			WriteQueueNums: int32(len(qs)),
@@ -348,8 +348,8 @@ func (ns *NameServer) GetRouteInfoByTopic(topic string) *protocol.TopicRouteData
 					break
 				}
 			}
-			
-			brokerData := &protocol.BrokerData{
+
+			brokerData := &remoting.BrokerData{
 				Cluster:     clusterName,
 				BrokerName:  brokerName,
 				BrokerAddrs: brokerAddrs,
@@ -405,11 +405,11 @@ func (ns *NameServer) scanNotActiveBrokerInternal() {
 }
 
 // GetAllClusterInfo 获取所有集群信息
-func (ns *NameServer) GetAllClusterInfo() *protocol.ClusterInfo {
+func (ns *NameServer) GetAllClusterInfo() *remoting.ClusterInfo {
 	ns.routeTable.mutex.RLock()
 	defer ns.routeTable.mutex.RUnlock()
 
-	clusterInfo := &protocol.ClusterInfo{
+	clusterInfo := &remoting.ClusterInfo{
 		BrokerAddrTable:  make(map[string]map[int64]string),
 		ClusterAddrTable: make(map[string][]string),
 	}
@@ -435,13 +435,13 @@ func (ns *NameServer) validateConnection(conn net.Conn, remoteAddr string) error
 	if ns.aclMiddleware == nil {
 		return fmt.Errorf("ACL middleware not initialized")
 	}
-	
+
 	// 简化的请求数据，实际应该从协议中解析
 	requestData := map[string]string{
 		"remoteAddress": remoteAddr,
 		"operation":     "CONNECT",
 	}
-	
+
 	// 进行管理员请求验证（连接验证）
 	_, err := ns.aclMiddleware.ValidateAdminRequest(requestData, remoteAddr)
 	return err
@@ -452,7 +452,7 @@ func (ns *NameServer) ValidateTopicAccess(requestData map[string]string, topicNa
 	if !ns.config.AclEnable || ns.aclMiddleware == nil {
 		return nil
 	}
-	
+
 	switch operation {
 	case "PUB":
 		_, err := ns.aclMiddleware.ValidateProducerRequest(requestData, topicName, remoteAddr)
@@ -485,145 +485,145 @@ func (ns *NameServer) ReloadAclConfig() error {
 }
 
 // readRemotingCommand 读取RocketMQ协议命令
-func (ns *NameServer) readRemotingCommand(reader *bufio.Reader) (*protocol.RemotingCommand, error) {
+func (ns *NameServer) readRemotingCommand(reader *bufio.Reader) (*remoting.RemotingCommand, error) {
 	// 读取消息长度（4字节）
 	lengthBytes := make([]byte, 4)
 	if _, err := io.ReadFull(reader, lengthBytes); err != nil {
 		return nil, err
 	}
-	
+
 	msgLength := binary.BigEndian.Uint32(lengthBytes)
 	if msgLength == 0 || msgLength > 16*1024*1024 { // 最大16MB
 		return nil, fmt.Errorf("invalid message length: %d", msgLength)
 	}
-	
+
 	// 读取消息内容
 	msgData := make([]byte, msgLength)
 	if _, err := io.ReadFull(reader, msgData); err != nil {
 		return nil, err
 	}
-	
+
 	// 解析协议头长度（前4字节）
 	headerLength := binary.BigEndian.Uint32(msgData[:4])
 	if headerLength > msgLength-4 {
 		return nil, fmt.Errorf("invalid header length: %d", headerLength)
 	}
-	
+
 	// 解析协议头
 	headerData := msgData[4 : 4+headerLength]
-	var command protocol.RemotingCommand
+	var command remoting.RemotingCommand
 	if err := json.Unmarshal(headerData, &command); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal header: %v", err)
 	}
-	
+
 	// 设置消息体
 	if msgLength > 4+headerLength {
 		command.Body = msgData[4+headerLength:]
 	}
-	
+
 	return &command, nil
 }
 
 // writeRemotingCommand 写入RocketMQ协议命令
-func (ns *NameServer) writeRemotingCommand(conn net.Conn, command *protocol.RemotingCommand) error {
+func (ns *NameServer) writeRemotingCommand(conn net.Conn, command *remoting.RemotingCommand) error {
 	// 序列化协议头
 	headerData, err := json.Marshal(command)
 	if err != nil {
 		return fmt.Errorf("failed to marshal header: %v", err)
 	}
-	
+
 	// 计算总长度
 	headerLength := len(headerData)
 	bodyLength := len(command.Body)
 	totalLength := 4 + headerLength + bodyLength // 4字节头长度 + 头数据 + 体数据
-	
+
 	// 构造完整消息
 	buf := bytes.NewBuffer(make([]byte, 0, 4+totalLength))
-	
+
 	// 写入总长度
 	lengthBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(lengthBytes, uint32(totalLength))
 	buf.Write(lengthBytes)
-	
+
 	// 写入头长度
 	headerLengthBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(headerLengthBytes, uint32(headerLength))
 	buf.Write(headerLengthBytes)
-	
+
 	// 写入头数据
 	buf.Write(headerData)
-	
+
 	// 写入体数据
 	if bodyLength > 0 {
 		buf.Write(command.Body)
 	}
-	
+
 	// 发送数据
 	_, err = conn.Write(buf.Bytes())
 	return err
 }
 
 // processRequest 处理请求
-func (ns *NameServer) processRequest(request *protocol.RemotingCommand, conn net.Conn) *protocol.RemotingCommand {
-	switch protocol.RequestCode(request.Code) {
-	case protocol.RegisterBroker:
+func (ns *NameServer) processRequest(request *remoting.RemotingCommand, conn net.Conn) *remoting.RemotingCommand {
+	switch remoting.RequestCode(request.Code) {
+	case remoting.RegisterBroker:
 		return ns.handleRegisterBroker(request, conn)
-	case protocol.UnregisterBroker:
+	case remoting.UnregisterBroker:
 		return ns.handleUnregisterBroker(request)
-	case protocol.GetRouteInfoByTopic:
+	case remoting.GetRouteInfoByTopic:
 		return ns.handleGetRouteInfoByTopic(request)
-	case protocol.GetBrokerClusterInfo:
+	case remoting.GetBrokerClusterInfo:
 		return ns.handleGetBrokerClusterInfo(request)
-	case protocol.UpdateAndCreateTopic:
+	case remoting.UpdateAndCreateTopic:
 		return ns.handleUpdateAndCreateTopic(request)
 	default:
 		log.Printf("Unsupported request code: %d", request.Code)
-		return ns.createErrorResponse(request, protocol.RequestCodeNotSupported, "Unsupported request code")
+		return ns.createErrorResponse(request, remoting.RequestCodeNotSupported, "Unsupported request code")
 	}
 }
 
 // handleRegisterBroker 处理Broker注册请求
-func (ns *NameServer) handleRegisterBroker(request *protocol.RemotingCommand, conn net.Conn) *protocol.RemotingCommand {
+func (ns *NameServer) handleRegisterBroker(request *remoting.RemotingCommand, conn net.Conn) *remoting.RemotingCommand {
 	// 解析请求参数
 	clusterName := request.ExtFields["clusterName"]
 	brokerName := request.ExtFields["brokerName"]
 	brokerAddr := request.ExtFields["brokerAddr"]
 	haServerAddr := request.ExtFields["haServerAddr"]
-	
+
 	// 解析TopicConfig数据
-	var topicConfigWrapper *protocol.TopicConfigSerializeWrapper
+	var topicConfigWrapper *remoting.TopicConfigSerializeWrapper
 	if len(request.Body) > 0 {
-		topicConfigWrapper = &protocol.TopicConfigSerializeWrapper{}
+		topicConfigWrapper = &remoting.TopicConfigSerializeWrapper{}
 		if err := json.Unmarshal(request.Body, topicConfigWrapper); err != nil {
 			log.Printf("Failed to unmarshal topic config: %v", err)
-			return ns.createErrorResponse(request, protocol.SystemError, "Invalid topic config data")
+			return ns.createErrorResponse(request, remoting.SystemError, "Invalid topic config data")
 		}
 	}
-	
+
 	// 注册Broker
 	result := ns.RegisterBroker(clusterName, brokerAddr, brokerName, 0, haServerAddr, topicConfigWrapper, nil, conn)
-	
+
 	// 创建响应
 	response := ns.createSuccessResponse(request)
 	responseData, _ := json.Marshal(result)
 	response.Body = responseData
-	
+
 	return response
 }
 
 // handleUnregisterBroker 处理Broker注销请求
-func (ns *NameServer) handleUnregisterBroker(request *protocol.RemotingCommand) *protocol.RemotingCommand {
+func (ns *NameServer) handleUnregisterBroker(request *remoting.RemotingCommand) *remoting.RemotingCommand {
 	clusterName := request.ExtFields["clusterName"]
 	brokerName := request.ExtFields["brokerName"]
 	brokerAddr := request.ExtFields["brokerAddr"]
-	
+
 	ns.mutex.Lock()
 	defer ns.mutex.Unlock()
-	
+
 	// 从路由表中移除Broker信息
 	ns.routeTable.mutex.Lock()
 	defer ns.routeTable.mutex.Unlock()
-	
+
 	// 移除Broker地址
 	if brokerAddrs, exists := ns.routeTable.brokerAddrTable[brokerName]; exists {
 		for brokerId, addr := range brokerAddrs {
@@ -636,7 +636,7 @@ func (ns *NameServer) handleUnregisterBroker(request *protocol.RemotingCommand) 
 			delete(ns.routeTable.brokerAddrTable, brokerName)
 		}
 	}
-	
+
 	// 移除集群信息
 	if brokerNames, exists := ns.routeTable.clusterAddrTable[clusterName]; exists {
 		for i, name := range brokerNames {
@@ -646,77 +646,77 @@ func (ns *NameServer) handleUnregisterBroker(request *protocol.RemotingCommand) 
 			}
 		}
 	}
-	
+
 	// 移除存活信息
 	delete(ns.routeTable.brokerLiveTable, brokerAddr)
-	
+
 	log.Printf("Unregistered broker: %s from cluster: %s", brokerName, clusterName)
 	return ns.createSuccessResponse(request)
 }
 
 // handleGetRouteInfoByTopic 处理获取Topic路由信息请求
-func (ns *NameServer) handleGetRouteInfoByTopic(request *protocol.RemotingCommand) *protocol.RemotingCommand {
+func (ns *NameServer) handleGetRouteInfoByTopic(request *remoting.RemotingCommand) *remoting.RemotingCommand {
 	topic := request.ExtFields["topic"]
 	if topic == "" {
-		return ns.createErrorResponse(request, protocol.TopicNotExist, "Topic name is empty")
+		return ns.createErrorResponse(request, remoting.TopicNotExist, "Topic name is empty")
 	}
-	
+
 	routeData := ns.GetRouteInfoByTopic(topic)
 	if routeData == nil {
-		return ns.createErrorResponse(request, protocol.TopicNotExist, fmt.Sprintf("Topic %s not exist", topic))
+		return ns.createErrorResponse(request, remoting.TopicNotExist, fmt.Sprintf("Topic %s not exist", topic))
 	}
-	
+
 	response := ns.createSuccessResponse(request)
 	responseData, _ := json.Marshal(routeData)
 	response.Body = responseData
-	
+
 	return response
 }
 
 // handleGetBrokerClusterInfo 处理获取集群信息请求
-func (ns *NameServer) handleGetBrokerClusterInfo(request *protocol.RemotingCommand) *protocol.RemotingCommand {
+func (ns *NameServer) handleGetBrokerClusterInfo(request *remoting.RemotingCommand) *remoting.RemotingCommand {
 	clusterInfo := ns.GetAllClusterInfo()
-	
+
 	response := ns.createSuccessResponse(request)
 	responseData, _ := json.Marshal(clusterInfo)
 	response.Body = responseData
-	
+
 	return response
 }
 
 // handleUpdateAndCreateTopic 处理更新和创建Topic请求
-func (ns *NameServer) handleUpdateAndCreateTopic(request *protocol.RemotingCommand) *protocol.RemotingCommand {
+func (ns *NameServer) handleUpdateAndCreateTopic(request *remoting.RemotingCommand) *remoting.RemotingCommand {
 	topic := request.ExtFields["topic"]
 	if topic == "" {
-		return ns.createErrorResponse(request, protocol.MessageIllegal, "Topic name is empty")
+		return ns.createErrorResponse(request, remoting.MessageIllegal, "Topic name is empty")
 	}
-	
+
 	// 解析TopicConfig
-	var topicConfig protocol.TopicConfig
+	var topicConfig remoting.TopicConfig
 	if len(request.Body) > 0 {
 		if err := json.Unmarshal(request.Body, &topicConfig); err != nil {
-			return ns.createErrorResponse(request, protocol.MessageIllegal, "Invalid topic config")
+			return ns.createErrorResponse(request, remoting.MessageIllegal, "Invalid topic config")
 		}
 	} else {
 		// 使用默认配置
-		topicConfig = protocol.TopicConfig{
+		topicConfig = remoting.TopicConfig{
 			TopicName:      topic,
 			ReadQueueNums:  4,
 			WriteQueueNums: 4,
 			Perm:           6, // 读写权限
 		}
 	}
-	
+
 	// 更新Topic配置（这里简化处理，实际应该通知所有Broker）
 	log.Printf("Updated topic config: %s", topic)
-	
+
 	return ns.createSuccessResponse(request)
 }
 
 // createSuccessResponse 创建成功响应
-func (ns *NameServer) createSuccessResponse(request *protocol.RemotingCommand) *protocol.RemotingCommand {
-	return &protocol.RemotingCommand{
-		Code:     protocol.RequestCode(protocol.Success),
+func (ns *NameServer) createSuccessResponse(request *remoting.RemotingCommand) *remoting.RemotingCommand {
+	return &remoting.RemotingCommand{
+		Code:     remoting.RequestCode(remoting.Success),
 		Language: "JAVA",
 		Version:  request.Version,
 		Opaque:   request.Opaque,
@@ -726,9 +726,9 @@ func (ns *NameServer) createSuccessResponse(request *protocol.RemotingCommand) *
 }
 
 // createErrorResponse 创建错误响应
-func (ns *NameServer) createErrorResponse(request *protocol.RemotingCommand, code protocol.ResponseCode, remark string) *protocol.RemotingCommand {
-	return &protocol.RemotingCommand{
-		Code:     protocol.RequestCode(code),
+func (ns *NameServer) createErrorResponse(request *remoting.RemotingCommand, code remoting.ResponseCode, remark string) *remoting.RemotingCommand {
+	return &remoting.RemotingCommand{
+		Code:     remoting.RequestCode(code),
 		Language: "JAVA",
 		Version:  request.Version,
 		Opaque:   request.Opaque,

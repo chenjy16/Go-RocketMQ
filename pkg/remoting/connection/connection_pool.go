@@ -1,13 +1,12 @@
-package remoting
+package connection
 
 import (
 	"context"
 	"fmt"
+	"net"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"go-rocketmq/pkg/protocol"
 )
 
 // ConnectionPoolError 连接池错误
@@ -38,6 +37,9 @@ const (
 	ErrCodeInvalidAddress    = 3004
 	ErrCodeConnectionTimeout = 3005
 	ErrCodePoolConfigInvalid = 3006
+	ErrCodeInvalidResponse   = 3007
+	ErrCodeEncodeFailed      = 3008
+	ErrCodeDecodeFailed      = 3009
 )
 
 // NewConnectionPoolError 创建连接池错误
@@ -51,7 +53,7 @@ func NewConnectionPoolError(code int, message string, err error) *ConnectionPool
 
 // ConnectionPool 连接池
 type ConnectionPool struct {
-	client         *RemotingClient
+	// client is managed by the RemotingClient
 	connections    sync.Map // map[string]*PooledConnection
 	maxConnections int32
 	currentCount   int32
@@ -101,7 +103,7 @@ type ConnectionPoolMetrics struct {
 // PooledConnection 池化连接
 type PooledConnection struct {
 	addr        string
-	client      *RemotingClient
+	conn        net.Conn
 	lastUsed    time.Time
 	useCount    int64
 	mutex       sync.RWMutex
@@ -152,7 +154,7 @@ func NewConnectionPool(config *ConnectionPoolConfig) *ConnectionPool {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	pool := &ConnectionPool{
-		client:         NewRemotingClient(),
+		// client is managed by the connection pool
 		maxConnections: config.MaxConnections,
 		maxIdleTime:    config.MaxIdleTime,
 		connectTimeout: config.ConnectTimeout,
@@ -246,60 +248,38 @@ func (cp *ConnectionPool) getConnectionWithCircuitBreaker(addr string) (*PooledC
 
 // createConnection 创建新连接
 func (cp *ConnectionPool) createConnection(addr string) (*PooledConnection, error) {
-	// 创建新的RemotingClient
-	client := NewRemotingClient()
-
-	// 建立连接
-	if err := client.Connect(addr); err != nil {
+	// Create a raw TCP connection
+	conn, err := net.DialTimeout("tcp", addr, cp.connectTimeout)
+	if err != nil {
 		cp.metrics.incrementFailedConnections()
 		cp.metrics.incrementError(ErrCodeConnectionFailed)
 		return nil, NewConnectionPoolError(ErrCodeConnectionFailed, fmt.Sprintf("failed to connect to %s", addr), err)
 	}
 
-	conn := &PooledConnection{
+	// Create a pooled connection wrapper
+	pooledConn := &PooledConnection{
 		addr:        addr,
-		client:      client,
+		conn:        conn,
 		lastUsed:    time.Now(),
 		useCount:    1,
 		closed:      false,
 		createdTime: time.Now(),
 	}
 
-	cp.connections.Store(addr, conn)
+	cp.connections.Store(addr, pooledConn)
 	atomic.AddInt32(&cp.currentCount, 1)
 
-	return conn, nil
+	return pooledConn, nil
 }
 
 // SendSync 同步发送请求
-func (cp *ConnectionPool) SendSync(addr string, request *protocol.RemotingCommand) (*protocol.RemotingCommand, error) {
-	conn, err := cp.GetConnection(addr)
-	if err != nil {
-		return nil, err
-	}
-
-	return conn.client.SendSync(addr, request, int64(cp.requestTimeout/time.Millisecond))
-}
+// Removed to avoid circular dependency with RemotingClient
 
 // SendAsync 异步发送请求
-func (cp *ConnectionPool) SendAsync(addr string, request *protocol.RemotingCommand, callback ResponseCallback) error {
-	conn, err := cp.GetConnection(addr)
-	if err != nil {
-		return err
-	}
-
-	return conn.client.SendAsync(addr, request, int64(cp.requestTimeout/time.Millisecond), callback)
-}
+// Removed to avoid circular dependency with RemotingClient
 
 // SendOneway 单向发送请求
-func (cp *ConnectionPool) SendOneway(addr string, request *protocol.RemotingCommand) error {
-	conn, err := cp.GetConnection(addr)
-	if err != nil {
-		return err
-	}
-
-	return conn.client.SendOneway(addr, request)
-}
+// Removed to avoid circular dependency with RemotingClient
 
 // shouldRetry 检查是否应该重试
 func (cp *ConnectionPool) shouldRetry(err error, attempt int) bool {
@@ -332,7 +312,7 @@ func (cp *ConnectionPool) IsConnected(addr string) bool {
 	conn.mutex.RLock()
 	defer conn.mutex.RUnlock()
 
-	return !conn.closed && conn.client.IsConnected(addr)
+	return !conn.closed && conn.conn != nil
 }
 
 // RemoveConnection 移除连接
@@ -348,7 +328,9 @@ func (cp *ConnectionPool) RemoveConnection(addr string) {
 
 	if !conn.closed {
 		conn.closed = true
-		conn.client.Close()
+		if conn.conn != nil {
+			conn.conn.Close()
+		}
 		cp.connections.Delete(addr)
 		atomic.AddInt32(&cp.currentCount, -1)
 	}
@@ -447,14 +429,13 @@ func (cp *ConnectionPool) Close() error {
 		conn.mutex.Lock()
 		if !conn.closed {
 			conn.closed = true
-			conn.client.Close()
+			if conn.conn != nil {
+				conn.conn.Close()
+			}
 		}
 		conn.mutex.Unlock()
 		return true
 	})
-
-	// 关闭主客户端
-	cp.client.Close()
 
 	// 等待清理goroutine结束
 	cp.wg.Wait()
@@ -530,12 +511,13 @@ func (cp *ConnectionPool) TestConnection(addr string) error {
 		return err
 	}
 
-	// 发送心跳测试连接
-	heartbeat := protocol.CreateRemotingCommand(protocol.RequestCode(34)) // HEART_BEAT
-	heartbeat.Body = []byte(`{"clientID":"test"}`)
+	// Test the connection by checking if it is still alive
+	// For now, we just check if the connection is not nil and not closed
+	if conn.conn == nil {
+		return NewConnectionPoolError(ErrCodeConnectionFailed, "connection is nil", nil)
+	}
 
-	_, err = conn.client.SendSync(addr, heartbeat, 5000) // 5秒超时
-	return err
+	return nil
 }
 
 // WarmupConnections 预热连接

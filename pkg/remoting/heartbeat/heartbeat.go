@@ -1,4 +1,4 @@
-package remoting
+package heartbeat
 
 import (
 	"context"
@@ -7,14 +7,15 @@ import (
 	"sync"
 	"time"
 
-	"go-rocketmq/pkg/protocol"
+	"go-rocketmq/pkg/remoting"
+	"go-rocketmq/pkg/remoting/client"
 )
 
 // HeartbeatData 心跳数据
 type HeartbeatData struct {
-	ClientID                string                    `json:"clientID"`
-	ProducerDataSet         []*ProducerData          `json:"producerDataSet"`
-	ConsumerDataSet         []*ConsumerData          `json:"consumerDataSet"`
+	ClientID        string          `json:"clientID"`
+	ProducerDataSet []*ProducerData `json:"producerDataSet"`
+	ConsumerDataSet []*ConsumerData `json:"consumerDataSet"`
 }
 
 // ProducerData 生产者数据
@@ -24,28 +25,28 @@ type ProducerData struct {
 
 // ConsumerData 消费者数据
 type ConsumerData struct {
-	GroupName           string                    `json:"groupName"`
-	ConsumeType         string                    `json:"consumeType"`
-	MessageModel        string                    `json:"messageModel"`
-	ConsumeFromWhere    string                    `json:"consumeFromWhere"`
-	SubscriptionDataSet []*protocol.SubscriptionData `json:"subscriptionDataSet"`
-	UnitMode            bool                      `json:"unitMode"`
+	GroupName           string                       `json:"groupName"`
+	ConsumeType         string                       `json:"consumeType"`
+	MessageModel        string                       `json:"messageModel"`
+	ConsumeFromWhere    string                       `json:"consumeFromWhere"`
+	SubscriptionDataSet []*remoting.SubscriptionData `json:"subscriptionDataSet"`
+	UnitMode            bool                         `json:"unitMode"`
 }
 
 // HeartbeatManager 心跳管理器
 type HeartbeatManager struct {
-	client       *RemotingClient
-	brokerAddrs  []string
+	client        *client.RemotingClient
+	brokerAddrs   []string
 	heartbeatData *HeartbeatData
-	mutex        sync.RWMutex
-	interval     time.Duration
-	ctx          context.Context
-	cancel       context.CancelFunc
-	wg           sync.WaitGroup
+	mutex         sync.RWMutex
+	interval      time.Duration
+	ctx           context.Context
+	cancel        context.CancelFunc
+	wg            sync.WaitGroup
 }
 
 // NewHeartbeatManager 创建心跳管理器
-func NewHeartbeatManager(client *RemotingClient, clientID string) *HeartbeatManager {
+func NewHeartbeatManager(client *client.RemotingClient, clientID string) *HeartbeatManager {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &HeartbeatManager{
 		client: client,
@@ -72,14 +73,14 @@ func (hm *HeartbeatManager) SetBrokerAddrs(addrs []string) {
 func (hm *HeartbeatManager) AddProducer(groupName string) {
 	hm.mutex.Lock()
 	defer hm.mutex.Unlock()
-	
+
 	// 检查是否已存在
 	for _, producer := range hm.heartbeatData.ProducerDataSet {
 		if producer.GroupName == groupName {
 			return
 		}
 	}
-	
+
 	hm.heartbeatData.ProducerDataSet = append(hm.heartbeatData.ProducerDataSet, &ProducerData{
 		GroupName: groupName,
 	})
@@ -89,7 +90,7 @@ func (hm *HeartbeatManager) AddProducer(groupName string) {
 func (hm *HeartbeatManager) RemoveProducer(groupName string) {
 	hm.mutex.Lock()
 	defer hm.mutex.Unlock()
-	
+
 	for i, producer := range hm.heartbeatData.ProducerDataSet {
 		if producer.GroupName == groupName {
 			hm.heartbeatData.ProducerDataSet = append(
@@ -102,10 +103,10 @@ func (hm *HeartbeatManager) RemoveProducer(groupName string) {
 }
 
 // AddConsumer 添加消费者
-func (hm *HeartbeatManager) AddConsumer(groupName, consumeType, messageModel, consumeFromWhere string, subscriptions []*protocol.SubscriptionData, unitMode bool) {
+func (hm *HeartbeatManager) AddConsumer(groupName, consumeType, messageModel, consumeFromWhere string, subscriptions []*remoting.SubscriptionData, unitMode bool) {
 	hm.mutex.Lock()
 	defer hm.mutex.Unlock()
-	
+
 	// 检查是否已存在，如果存在则更新
 	for _, consumer := range hm.heartbeatData.ConsumerDataSet {
 		if consumer.GroupName == groupName {
@@ -117,7 +118,7 @@ func (hm *HeartbeatManager) AddConsumer(groupName, consumeType, messageModel, co
 			return
 		}
 	}
-	
+
 	// 添加新消费者
 	hm.heartbeatData.ConsumerDataSet = append(hm.heartbeatData.ConsumerDataSet, &ConsumerData{
 		GroupName:           groupName,
@@ -133,7 +134,7 @@ func (hm *HeartbeatManager) AddConsumer(groupName, consumeType, messageModel, co
 func (hm *HeartbeatManager) RemoveConsumer(groupName string) {
 	hm.mutex.Lock()
 	defer hm.mutex.Unlock()
-	
+
 	for i, consumer := range hm.heartbeatData.ConsumerDataSet {
 		if consumer.GroupName == groupName {
 			hm.heartbeatData.ConsumerDataSet = append(
@@ -160,13 +161,13 @@ func (hm *HeartbeatManager) Stop() {
 // heartbeatRoutine 心跳例程
 func (hm *HeartbeatManager) heartbeatRoutine() {
 	defer hm.wg.Done()
-	
+
 	ticker := time.NewTicker(hm.interval)
 	defer ticker.Stop()
-	
+
 	// 立即发送一次心跳
 	hm.sendHeartbeatToAllBrokers()
-	
+
 	for {
 		select {
 		case <-ticker.C:
@@ -184,7 +185,7 @@ func (hm *HeartbeatManager) sendHeartbeatToAllBrokers() {
 	copy(brokerAddrs, hm.brokerAddrs)
 	heartbeatData := hm.cloneHeartbeatData()
 	hm.mutex.RUnlock()
-	
+
 	for _, brokerAddr := range brokerAddrs {
 		go hm.sendHeartbeatToBroker(brokerAddr, heartbeatData)
 	}
@@ -197,13 +198,25 @@ func (hm *HeartbeatManager) sendHeartbeatToBroker(brokerAddr string, heartbeatDa
 	if err != nil {
 		return
 	}
-	
+
 	// 创建心跳请求
-	request := protocol.CreateRemotingCommand(protocol.RequestCode(34)) // HEART_BEAT
+	request := remoting.CreateRemotingCommand(remoting.RequestCode(34)) // HEART_BEAT
 	request.Body = body
-	
+
+	// 转换为客户端RemotingCommand类型
+	clientRequest := &client.RemotingCommand{
+		Code:      int32(request.Code),
+		Language:  request.Language,
+		Version:   request.Version,
+		Opaque:    request.Opaque,
+		Flag:      request.Flag,
+		Remark:    request.Remark,
+		ExtFields: request.ExtFields,
+		Body:      request.Body,
+	}
+
 	// 发送心跳（单向发送，不等待响应）
-	hm.client.SendOneway(brokerAddr, request)
+	hm.client.SendOneway(brokerAddr, clientRequest)
 }
 
 // cloneHeartbeatData 克隆心跳数据
@@ -213,14 +226,14 @@ func (hm *HeartbeatManager) cloneHeartbeatData() *HeartbeatData {
 		ProducerDataSet: make([]*ProducerData, len(hm.heartbeatData.ProducerDataSet)),
 		ConsumerDataSet: make([]*ConsumerData, len(hm.heartbeatData.ConsumerDataSet)),
 	}
-	
+
 	// 复制生产者数据
 	for i, producer := range hm.heartbeatData.ProducerDataSet {
 		data.ProducerDataSet[i] = &ProducerData{
 			GroupName: producer.GroupName,
 		}
 	}
-	
+
 	// 复制消费者数据
 	for i, consumer := range hm.heartbeatData.ConsumerDataSet {
 		data.ConsumerDataSet[i] = &ConsumerData{
@@ -228,13 +241,13 @@ func (hm *HeartbeatManager) cloneHeartbeatData() *HeartbeatData {
 			ConsumeType:         consumer.ConsumeType,
 			MessageModel:        consumer.MessageModel,
 			ConsumeFromWhere:    consumer.ConsumeFromWhere,
-			SubscriptionDataSet: make([]*protocol.SubscriptionData, len(consumer.SubscriptionDataSet)),
+			SubscriptionDataSet: make([]*remoting.SubscriptionData, len(consumer.SubscriptionDataSet)),
 			UnitMode:            consumer.UnitMode,
 		}
-		
+
 		// 复制订阅数据
 		for j, sub := range consumer.SubscriptionDataSet {
-			data.ConsumerDataSet[i].SubscriptionDataSet[j] = &protocol.SubscriptionData{
+			data.ConsumerDataSet[i].SubscriptionDataSet[j] = &remoting.SubscriptionData{
 				Topic:          sub.Topic,
 				SubString:      sub.SubString,
 				TagsSet:        append([]string(nil), sub.TagsSet...),
@@ -244,7 +257,7 @@ func (hm *HeartbeatManager) cloneHeartbeatData() *HeartbeatData {
 			}
 		}
 	}
-	
+
 	return data
 }
 
@@ -274,9 +287,9 @@ type HeartbeatProcessor struct {
 
 // ClientChannelInfo 客户端通道信息
 type ClientChannelInfo struct {
-	ClientID    string
-	RemoteAddr  string
-	LastUpdate  time.Time
+	ClientID      string
+	RemoteAddr    string
+	LastUpdate    time.Time
 	HeartbeatData *HeartbeatData
 }
 
@@ -286,25 +299,25 @@ func NewHeartbeatProcessor() *HeartbeatProcessor {
 }
 
 // ProcessRequest 处理心跳请求
-func (hp *HeartbeatProcessor) ProcessRequest(ctx context.Context, request *protocol.RemotingCommand, conn *ServerConnection) (*protocol.RemotingCommand, error) {
+func (hp *HeartbeatProcessor) ProcessRequest(ctx context.Context, request *remoting.RemotingCommand, conn *remoting.ServerConnection) (*remoting.RemotingCommand, error) {
 	// 解析心跳数据
 	var heartbeatData HeartbeatData
 	if err := json.Unmarshal(request.Body, &heartbeatData); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal heartbeat data: %v", err)
 	}
-	
+
 	// 更新客户端信息
 	clientInfo := &ClientChannelInfo{
 		ClientID:      heartbeatData.ClientID,
-		RemoteAddr:    conn.remoteAddr,
+		RemoteAddr:    conn.GetRemoteAddr(),
 		LastUpdate:    time.Now(),
 		HeartbeatData: &heartbeatData,
 	}
-	
+
 	hp.clientTable.Store(heartbeatData.ClientID, clientInfo)
-	
+
 	// 返回成功响应
-	response := protocol.CreateResponseCommand(protocol.Success, "")
+	response := remoting.CreateResponseCommand(remoting.Success, "")
 	return response, nil
 }
 
@@ -349,7 +362,7 @@ func (hp *HeartbeatProcessor) GetProducerGroups() []string {
 		}
 		return true
 	})
-	
+
 	var groups []string
 	for group := range groupSet {
 		groups = append(groups, group)
@@ -367,7 +380,7 @@ func (hp *HeartbeatProcessor) GetConsumerGroups() []string {
 		}
 		return true
 	})
-	
+
 	var groups []string
 	for group := range groupSet {
 		groups = append(groups, group)

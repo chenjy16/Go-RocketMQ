@@ -1,4 +1,4 @@
-package remoting
+package processor
 
 import (
 	"context"
@@ -8,52 +8,55 @@ import (
 	"sync"
 	"time"
 
-	"go-rocketmq/pkg/protocol"
+	"go-rocketmq/pkg/remoting"
+	"go-rocketmq/pkg/remoting/codec"
+	"go-rocketmq/pkg/remoting/heartbeat"
+	"go-rocketmq/pkg/remoting/routing"
 )
 
 // ProcessorContext 处理器上下文
 type ProcessorContext struct {
 	Ctx        context.Context
-	Connection *Connection
-	Request    *protocol.RemotingCommand
+	Connection *remoting.Connection
+	Request    *remoting.RemotingCommand
 	StartTime  time.Time
 }
 
 // ProcessorResult 处理器结果
 type ProcessorResult struct {
-	Response *protocol.RemotingCommand
+	Response *remoting.RemotingCommand
 	Error    error
 }
 
 // ProcessorInterface 处理器接口（避免与remoting_server.go中的RequestProcessor冲突）
 type ProcessorInterface interface {
 	ProcessRequest(ctx *ProcessorContext) *ProcessorResult
-	GetRequestCode() protocol.RequestCode
+	GetRequestCode() remoting.RequestCode
 }
 
 // ProtocolProcessor 协议处理器
 type ProtocolProcessor struct {
-	processors map[protocol.RequestCode]ProcessorInterface
+	processors map[remoting.RequestCode]ProcessorInterface
 	mutex      sync.RWMutex
 	metrics    *ProcessorMetrics
 }
 
 // ProcessorMetrics 处理器指标
 type ProcessorMetrics struct {
-	TotalRequests    int64
-	SuccessRequests  int64
-	FailedRequests   int64
-	AverageLatency   time.Duration
-	MaxLatency       time.Duration
-	MinLatency       time.Duration
-	mutex            sync.RWMutex
+	TotalRequests   int64
+	SuccessRequests int64
+	FailedRequests  int64
+	AverageLatency  time.Duration
+	MaxLatency      time.Duration
+	MinLatency      time.Duration
+	mutex           sync.RWMutex
 }
 
 // NewProtocolProcessor 创建协议处理器
 func NewProtocolProcessor() *ProtocolProcessor {
 	return &ProtocolProcessor{
-		processors: make(map[protocol.RequestCode]ProcessorInterface),
-		metrics:    &ProcessorMetrics{
+		processors: make(map[remoting.RequestCode]ProcessorInterface),
+		metrics: &ProcessorMetrics{
 			MinLatency: time.Hour, // 初始化为一个大值
 		},
 	}
@@ -63,41 +66,41 @@ func NewProtocolProcessor() *ProtocolProcessor {
 func (pp *ProtocolProcessor) RegisterProcessor(processor ProcessorInterface) {
 	pp.mutex.Lock()
 	defer pp.mutex.Unlock()
-	
+
 	requestCode := processor.GetRequestCode()
 	pp.processors[requestCode] = processor
 	log.Printf("Registered processor for request code: %d", requestCode)
 }
 
 // UnregisterProcessor 注销请求处理器
-func (pp *ProtocolProcessor) UnregisterProcessor(requestCode protocol.RequestCode) {
+func (pp *ProtocolProcessor) UnregisterProcessor(requestCode remoting.RequestCode) {
 	pp.mutex.Lock()
 	defer pp.mutex.Unlock()
-	
+
 	delete(pp.processors, requestCode)
 	log.Printf("Unregistered processor for request code: %d", requestCode)
 }
 
 // ProcessRequest 处理请求
-func (pp *ProtocolProcessor) ProcessRequest(ctx context.Context, conn *Connection, request *protocol.RemotingCommand) *protocol.RemotingCommand {
+func (pp *ProtocolProcessor) ProcessRequest(ctx context.Context, conn *remoting.Connection, request *remoting.RemotingCommand) *remoting.RemotingCommand {
 	startTime := time.Now()
-	
+
 	// 更新指标
 	defer func() {
 		latency := time.Since(startTime)
 		pp.updateMetrics(latency)
 	}()
-	
+
 	// 查找处理器
 	pp.mutex.RLock()
-	processor, exists := pp.processors[request.Code]
+	processor, exists := pp.processors[remoting.RequestCode(request.Code)]
 	pp.mutex.RUnlock()
-	
+
 	if !exists {
 		log.Printf("No processor found for request code: %d", request.Code)
-		return pp.createErrorResponse(request, protocol.SystemError, "No processor found")
+		return pp.createErrorResponse(request, remoting.SystemError, "No processor found")
 	}
-	
+
 	// 创建处理器上下文
 	processorCtx := &ProcessorContext{
 		Ctx:        ctx,
@@ -105,41 +108,41 @@ func (pp *ProtocolProcessor) ProcessRequest(ctx context.Context, conn *Connectio
 		Request:    request,
 		StartTime:  startTime,
 	}
-	
+
 	// 处理请求
 	result := processor.ProcessRequest(processorCtx)
 	if result == nil {
-		return pp.createErrorResponse(request, protocol.SystemError, "Processor returned nil result")
+		return pp.createErrorResponse(request, remoting.SystemError, "Processor returned nil result")
 	}
-	
+
 	if result.Error != nil {
 		log.Printf("Processor error for request code %d: %v", request.Code, result.Error)
-		return pp.createErrorResponse(request, protocol.SystemError, result.Error.Error())
+		return pp.createErrorResponse(request, remoting.SystemError, result.Error.Error())
 	}
-	
+
 	if result.Response == nil {
-		return pp.createErrorResponse(request, protocol.SystemError, "Processor returned nil response")
+		return pp.createErrorResponse(request, remoting.SystemError, "Processor returned nil response")
 	}
-	
+
 	// 设置响应的Opaque
 	result.Response.Opaque = request.Opaque
-	
+
 	return result.Response
 }
 
 // createErrorResponse 创建错误响应
-func (pp *ProtocolProcessor) createErrorResponse(request *protocol.RemotingCommand, code protocol.ResponseCode, message string) *protocol.RemotingCommand {
-	return protocol.CreateResponseCommand(code, message)
+func (pp *ProtocolProcessor) createErrorResponse(request *remoting.RemotingCommand, code remoting.ResponseCode, message string) *remoting.RemotingCommand {
+	return remoting.CreateResponseCommand(code, message)
 }
 
 // updateMetrics 更新指标
 func (pp *ProtocolProcessor) updateMetrics(latency time.Duration) {
 	pp.metrics.mutex.Lock()
 	defer pp.metrics.mutex.Unlock()
-	
+
 	pp.metrics.TotalRequests++
 	pp.metrics.SuccessRequests++
-	
+
 	// 更新延迟统计
 	if latency > pp.metrics.MaxLatency {
 		pp.metrics.MaxLatency = latency
@@ -147,7 +150,7 @@ func (pp *ProtocolProcessor) updateMetrics(latency time.Duration) {
 	if latency < pp.metrics.MinLatency {
 		pp.metrics.MinLatency = latency
 	}
-	
+
 	// 计算平均延迟（简化实现）
 	pp.metrics.AverageLatency = (pp.metrics.AverageLatency*time.Duration(pp.metrics.TotalRequests-1) + latency) / time.Duration(pp.metrics.TotalRequests)
 }
@@ -156,16 +159,16 @@ func (pp *ProtocolProcessor) updateMetrics(latency time.Duration) {
 func (pp *ProtocolProcessor) GetMetrics() ProcessorMetrics {
 	pp.metrics.mutex.RLock()
 	defer pp.metrics.mutex.RUnlock()
-	
+
 	return *pp.metrics
 }
 
 // GetProcessors 获取所有处理器
-func (pp *ProtocolProcessor) GetProcessors() map[protocol.RequestCode]ProcessorInterface {
+func (pp *ProtocolProcessor) GetProcessors() map[remoting.RequestCode]ProcessorInterface {
 	pp.mutex.RLock()
 	defer pp.mutex.RUnlock()
-	
-	processors := make(map[protocol.RequestCode]ProcessorInterface)
+
+	processors := make(map[remoting.RequestCode]ProcessorInterface)
 	for code, processor := range pp.processors {
 		processors[code] = processor
 	}
@@ -179,8 +182,8 @@ type DefaultSendMessageProcessor struct {
 
 // MessageStore 消息存储接口
 type MessageStore interface {
-	PutMessage(msg *Message) error
-	GetMessage(topic string, queueId int32, offset int64) (*MessageExt, error)
+	PutMessage(msg *codec.Message) error
+	GetMessage(topic string, queueId int32, offset int64) (*codec.MessageExt, error)
 }
 
 // NewDefaultSendMessageProcessor 创建默认发送消息处理器
@@ -193,9 +196,9 @@ func NewDefaultSendMessageProcessor(messageStore MessageStore) *DefaultSendMessa
 // ProcessRequest 处理发送消息请求
 func (p *DefaultSendMessageProcessor) ProcessRequest(ctx *ProcessorContext) *ProcessorResult {
 	request := ctx.Request
-	
+
 	// 解析请求头
-	var header protocol.SendMessageRequestHeader
+	var header remoting.SendMessageRequestHeader
 	if request.ExtFields != nil {
 		headerData, _ := json.Marshal(request.ExtFields)
 		if err := json.Unmarshal(headerData, &header); err != nil {
@@ -204,53 +207,53 @@ func (p *DefaultSendMessageProcessor) ProcessRequest(ctx *ProcessorContext) *Pro
 			}
 		}
 	}
-	
+
 	// 解析Properties字符串为map
 	properties := make(map[string]string)
 	if header.Properties != "" {
 		// 简化实现：假设Properties是JSON格式
 		json.Unmarshal([]byte(header.Properties), &properties)
 	}
-	
+
 	// 创建消息
-	msg := &Message{
+	msg := &codec.Message{
 		Topic:      header.Topic,
 		Flag:       header.Flag,
 		Properties: properties,
 		Body:       request.Body,
 	}
-	
+
 	// 存储消息
 	if err := p.messageStore.PutMessage(msg); err != nil {
 		return &ProcessorResult{
 			Error: fmt.Errorf("failed to store message: %v", err),
 		}
 	}
-	
+
 	// 创建响应
-	responseHeader := &protocol.SendMessageResponseHeader{
+	responseHeader := &remoting.SendMessageResponseHeader{
 		MsgId:         fmt.Sprintf("%d_%d", time.Now().UnixNano(), header.QueueId),
 		QueueId:       header.QueueId,
-		QueueOffset:   0, // 简化实现
+		QueueOffset:   0,  // 简化实现
 		TransactionId: "", // 简化实现
 	}
-	
+
 	extFields := make(map[string]string)
 	headerData, _ := json.Marshal(responseHeader)
 	json.Unmarshal(headerData, &extFields)
-	
-	response := protocol.CreateResponseCommand(protocol.Success, "")
+
+	response := remoting.CreateResponseCommand(remoting.Success, "")
 	response.Opaque = request.Opaque
 	response.ExtFields = extFields
-	
+
 	return &ProcessorResult{
 		Response: response,
 	}
 }
 
 // GetRequestCode 获取请求代码
-func (p *DefaultSendMessageProcessor) GetRequestCode() protocol.RequestCode {
-	return protocol.SendMessage
+func (p *DefaultSendMessageProcessor) GetRequestCode() remoting.RequestCode {
+	return remoting.SendMessage
 }
 
 // DefaultPullMessageProcessor 默认拉取消息处理器
@@ -268,9 +271,9 @@ func NewDefaultPullMessageProcessor(messageStore MessageStore) *DefaultPullMessa
 // ProcessRequest 处理拉取消息请求
 func (p *DefaultPullMessageProcessor) ProcessRequest(ctx *ProcessorContext) *ProcessorResult {
 	request := ctx.Request
-	
+
 	// 解析请求头
-	var header protocol.PullMessageRequestHeader
+	var header remoting.PullMessageRequestHeader
 	if request.ExtFields != nil {
 		headerData, _ := json.Marshal(request.ExtFields)
 		if err := json.Unmarshal(headerData, &header); err != nil {
@@ -279,7 +282,7 @@ func (p *DefaultPullMessageProcessor) ProcessRequest(ctx *ProcessorContext) *Pro
 			}
 		}
 	}
-	
+
 	// 拉取消息（简化实现）
 	msg, err := p.messageStore.GetMessage(header.Topic, header.QueueId, header.QueueOffset)
 	if err != nil {
@@ -287,48 +290,48 @@ func (p *DefaultPullMessageProcessor) ProcessRequest(ctx *ProcessorContext) *Pro
 			Error: fmt.Errorf("failed to get message: %v", err),
 		}
 	}
-	
+
 	// 创建响应
-	responseHeader := &protocol.PullMessageResponseHeader{
+	responseHeader := &remoting.PullMessageResponseHeader{
 		SuggestWhichBrokerId: 0,
 		NextBeginOffset:      header.QueueOffset + 1,
 		MinOffset:            0,
 		MaxOffset:            1000, // 简化实现
 	}
-	
+
 	extFields := make(map[string]string)
 	headerData, _ := json.Marshal(responseHeader)
 	json.Unmarshal(headerData, &extFields)
-	
+
 	var responseBody []byte
 	if msg != nil {
 		// 编码消息
-		codec := NewMessageCodec()
+		codec := codec.NewMessageCodec()
 		responseBody, _ = codec.EncodeMessage(msg.Message)
 	}
-	
-	response := protocol.CreateResponseCommand(protocol.Success, "")
+
+	response := remoting.CreateResponseCommand(remoting.Success, "")
 	response.Opaque = request.Opaque
 	response.ExtFields = extFields
 	response.Body = responseBody
-	
+
 	return &ProcessorResult{
 		Response: response,
 	}
 }
 
 // GetRequestCode 获取请求代码
-func (p *DefaultPullMessageProcessor) GetRequestCode() protocol.RequestCode {
-	return protocol.PullMessage
+func (p *DefaultPullMessageProcessor) GetRequestCode() remoting.RequestCode {
+	return remoting.PullMessage
 }
 
 // DefaultHeartbeatProcessor 默认心跳处理器
 type DefaultHeartbeatProcessor struct {
-	heartbeatManager *HeartbeatManager
+	heartbeatManager *heartbeat.HeartbeatManager
 }
 
 // NewDefaultHeartbeatProcessor 创建默认心跳处理器
-func NewDefaultHeartbeatProcessor(heartbeatManager *HeartbeatManager) *DefaultHeartbeatProcessor {
+func NewDefaultHeartbeatProcessor(heartbeatManager *heartbeat.HeartbeatManager) *DefaultHeartbeatProcessor {
 	return &DefaultHeartbeatProcessor{
 		heartbeatManager: heartbeatManager,
 	}
@@ -337,9 +340,9 @@ func NewDefaultHeartbeatProcessor(heartbeatManager *HeartbeatManager) *DefaultHe
 // ProcessRequest 处理心跳请求
 func (p *DefaultHeartbeatProcessor) ProcessRequest(ctx *ProcessorContext) *ProcessorResult {
 	request := ctx.Request
-	
+
 	// 解析心跳数据
-	var heartbeatData HeartbeatData
+	var heartbeatData heartbeat.HeartbeatData
 	if request.Body != nil {
 		if err := json.Unmarshal(request.Body, &heartbeatData); err != nil {
 			return &ProcessorResult{
@@ -347,34 +350,34 @@ func (p *DefaultHeartbeatProcessor) ProcessRequest(ctx *ProcessorContext) *Proce
 			}
 		}
 	}
-	
+
 	// 处理心跳
 	if p.heartbeatManager != nil {
 		// 更新客户端信息（简化实现）
 		log.Printf("Received heartbeat from client: %s", heartbeatData.ClientID)
 	}
-	
+
 	// 创建响应
-	response := protocol.CreateResponseCommand(protocol.Success, "")
+	response := remoting.CreateResponseCommand(remoting.Success, "")
 	response.Opaque = request.Opaque
-	
+
 	return &ProcessorResult{
 		Response: response,
 	}
 }
 
 // GetRequestCode 获取请求代码
-func (p *DefaultHeartbeatProcessor) GetRequestCode() protocol.RequestCode {
-	return protocol.SendMessage // 暂时使用已存在的RequestCode，实际应该定义HeartBeat
+func (p *DefaultHeartbeatProcessor) GetRequestCode() remoting.RequestCode {
+	return remoting.SendMessage // 暂时使用已存在的RequestCode，实际应该定义HeartBeat
 }
 
 // DefaultQueryRouteProcessor 默认查询路由处理器
 type DefaultQueryRouteProcessor struct {
-	routeManager *RouteManager
+	routeManager *routing.RouteManager
 }
 
 // NewDefaultQueryRouteProcessor 创建默认查询路由处理器
-func NewDefaultQueryRouteProcessor(routeManager *RouteManager) *DefaultQueryRouteProcessor {
+func NewDefaultQueryRouteProcessor(routeManager *routing.RouteManager) *DefaultQueryRouteProcessor {
 	return &DefaultQueryRouteProcessor{
 		routeManager: routeManager,
 	}
@@ -383,23 +386,23 @@ func NewDefaultQueryRouteProcessor(routeManager *RouteManager) *DefaultQueryRout
 // ProcessRequest 处理查询路由请求
 func (p *DefaultQueryRouteProcessor) ProcessRequest(ctx *ProcessorContext) *ProcessorResult {
 	request := ctx.Request
-	
+
 	// 从ExtFields中获取Topic
 	topic := ""
 	if request.ExtFields != nil {
 		topic = request.ExtFields["topic"]
 	}
-	
+
 	if topic == "" {
 		return &ProcessorResult{
 			Error: fmt.Errorf("topic is required for route query"),
 		}
 	}
-	
+
 	// 查询路由信息（简化实现）
-	routeData := &protocol.TopicRouteData{
+	routeData := &remoting.TopicRouteData{
 		OrderTopicConf: "",
-		QueueDatas: []*protocol.QueueData{
+		QueueDatas: []*remoting.QueueData{
 			{
 				BrokerName:     "broker-a",
 				ReadQueueNums:  4,
@@ -408,7 +411,7 @@ func (p *DefaultQueryRouteProcessor) ProcessRequest(ctx *ProcessorContext) *Proc
 				TopicSysFlag:   0,
 			},
 		},
-		BrokerDatas: []*protocol.BrokerData{
+		BrokerDatas: []*remoting.BrokerData{
 			{
 				Cluster:    "DefaultCluster",
 				BrokerName: "broker-a",
@@ -419,7 +422,7 @@ func (p *DefaultQueryRouteProcessor) ProcessRequest(ctx *ProcessorContext) *Proc
 		},
 		FilterServerTable: make(map[string][]string),
 	}
-	
+
 	// 序列化路由数据
 	routeBody, err := json.Marshal(routeData)
 	if err != nil {
@@ -427,18 +430,18 @@ func (p *DefaultQueryRouteProcessor) ProcessRequest(ctx *ProcessorContext) *Proc
 			Error: fmt.Errorf("failed to marshal route data: %v", err),
 		}
 	}
-	
+
 	// 创建响应
-	response := protocol.CreateResponseCommand(protocol.Success, "")
+	response := remoting.CreateResponseCommand(remoting.Success, "")
 	response.Opaque = request.Opaque
 	response.Body = routeBody
-	
+
 	return &ProcessorResult{
 		Response: response,
 	}
 }
 
 // GetRequestCode 获取请求代码
-func (p *DefaultQueryRouteProcessor) GetRequestCode() protocol.RequestCode {
-	return protocol.GetRouteInfoByTopic
+func (p *DefaultQueryRouteProcessor) GetRequestCode() remoting.RequestCode {
+	return remoting.GetRouteInfoByTopic
 }

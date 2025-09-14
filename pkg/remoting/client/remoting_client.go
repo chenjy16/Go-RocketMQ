@@ -1,4 +1,4 @@
-package remoting
+package client
 
 import (
 	"bufio"
@@ -13,8 +13,20 @@ import (
 	"sync/atomic"
 	"time"
 
-	"go-rocketmq/pkg/protocol"
+	"go-rocketmq/pkg/remoting/connection"
 )
+
+// RemotingCommand 远程调用命令
+type RemotingCommand struct {
+	Code      int32             `json:"code"`
+	Language  string            `json:"language"`
+	Version   int32             `json:"version"`
+	Opaque    int32             `json:"opaque"`
+	Flag      int32             `json:"flag"`
+	Remark    string            `json:"remark"`
+	ExtFields map[string]string `json:"extFields"`
+	Body      []byte            `json:"body"`
+}
 
 // RemotingError 远程调用错误
 type RemotingError struct {
@@ -37,17 +49,7 @@ func (e *RemotingError) Unwrap() error {
 }
 
 // Error codes
-const (
-	ErrCodeClientConnectionFailed = 1001
-	ErrCodeRequestTimeout         = 1002
-	ErrCodeInvalidResponse        = 1003
-	ErrCodeEncodeFailed           = 1004
-	ErrCodeDecodeFailed           = 1005
-	ErrCodeClientClosed           = 1006
-	ErrCodeInvalidRequest         = 1007
-	ErrCodeNetworkError           = 1008
-	ErrCodeAuthenticationFailed   = 1009
-)
+// Error codes are defined in the connection package
 
 // NewRemotingError 创建远程调用错误
 func NewRemotingError(code int, message string, err error) *RemotingError {
@@ -68,7 +70,7 @@ type RemotingClient struct {
 	cancel       context.CancelFunc
 
 	// 连接池
-	connectionPool *ConnectionPool
+	connectionPool *connection.ConnectionPool
 
 	// 错误处理配置
 	errorConfig *ErrorHandlingConfig
@@ -123,12 +125,12 @@ type ResponseFuture struct {
 	TimeoutMs int64
 	Callback  ResponseCallback
 	BeginTime time.Time
-	Done      chan *protocol.RemotingCommand
+	Done      chan *RemotingCommand
 	Semaphore chan struct{}
 }
 
 // ResponseCallback 响应回调
-type ResponseCallback func(*protocol.RemotingCommand, error)
+type ResponseCallback func(*RemotingCommand, error)
 
 // CircuitBreaker 熔断器
 type CircuitBreaker struct {
@@ -197,7 +199,7 @@ func NewRemotingClient() *RemotingClient {
 		ctx:    ctx,
 		cancel: cancel,
 		// 初始化连接池
-		connectionPool: NewConnectionPool(nil),
+		connectionPool: connection.NewConnectionPool(nil),
 		// 初始化错误处理配置
 		errorConfig: DefaultErrorHandlingConfig,
 		// 初始化指标
@@ -229,22 +231,22 @@ func (rc *RemotingClient) cleanupRoutine() {
 // Connect 连接到指定地址
 func (rc *RemotingClient) Connect(addr string) error {
 	if atomic.LoadInt32(&rc.closed) == 1 {
-		return NewRemotingError(ErrCodeClientClosed, "client is closed", nil)
+		return NewRemotingError(connection.ErrCodePoolClosed, "client is closed", nil)
 	}
 
 	// 使用连接池获取连接
 	_, err := rc.connectionPool.GetConnection(addr)
 	if err != nil {
-		return NewRemotingError(ErrCodeConnectionFailed, fmt.Sprintf("failed to connect to %s", addr), err)
+		return NewRemotingError(connection.ErrCodeConnectionFailed, fmt.Sprintf("failed to connect to %s", addr), err)
 	}
 
 	return nil
 }
 
 // SendSync 同步发送请求
-func (rc *RemotingClient) SendSync(addr string, request *protocol.RemotingCommand, timeoutMs int64) (*protocol.RemotingCommand, error) {
+func (rc *RemotingClient) SendSync(addr string, request *RemotingCommand, timeoutMs int64) (*RemotingCommand, error) {
 	if atomic.LoadInt32(&rc.closed) == 1 {
-		return nil, NewRemotingError(ErrCodeClientClosed, "client is closed", nil)
+		return nil, NewRemotingError(connection.ErrCodePoolClosed, "client is closed", nil)
 	}
 
 	startTime := time.Now()
@@ -281,14 +283,14 @@ func (rc *RemotingClient) SendSync(addr string, request *protocol.RemotingComman
 }
 
 // sendSyncWithCircuitBreaker 带熔断器的同步发送
-func (rc *RemotingClient) sendSyncWithCircuitBreaker(addr string, request *protocol.RemotingCommand, timeoutMs int64) (*protocol.RemotingCommand, error) {
+func (rc *RemotingClient) sendSyncWithCircuitBreaker(addr string, request *RemotingCommand, timeoutMs int64) (*RemotingCommand, error) {
 	// 检查熔断器
 	// 这里简化实现，实际应该为每个地址维护一个熔断器
 
 	// 使用连接池获取连接
 	conn, err := rc.connectionPool.GetConnection(addr)
 	if err != nil {
-		return nil, NewRemotingError(ErrCodeConnectionFailed, fmt.Sprintf("failed to get connection to %s", addr), err)
+		return nil, NewRemotingError(connection.ErrCodeConnectionFailed, fmt.Sprintf("failed to get connection to %s", addr), err)
 	}
 
 	// 设置请求ID
@@ -300,7 +302,7 @@ func (rc *RemotingClient) sendSyncWithCircuitBreaker(addr string, request *proto
 		Opaque:    opaque,
 		TimeoutMs: timeoutMs,
 		BeginTime: time.Now(),
-		Done:      make(chan *protocol.RemotingCommand, 1),
+		Done:      make(chan *RemotingCommand, 1),
 		Semaphore: make(chan struct{}, 1),
 	}
 
@@ -309,34 +311,34 @@ func (rc *RemotingClient) sendSyncWithCircuitBreaker(addr string, request *proto
 
 	// 发送请求
 	if err := rc.sendRequest(conn, request); err != nil {
-		return nil, NewRemotingError(ErrCodeNetworkError, "failed to send request", err)
+		return nil, NewRemotingError(connection.ErrCodeConnectionFailed, "failed to send request", err)
 	}
 
 	// 等待响应
 	select {
 	case response := <-future.Done:
 		if response == nil {
-			return nil, NewRemotingError(ErrCodeInvalidResponse, "received nil response", nil)
+			return nil, NewRemotingError(connection.ErrCodeInvalidResponse, "received nil response", nil)
 		}
 		return response, nil
 	case <-time.After(time.Duration(timeoutMs) * time.Millisecond):
 		rc.metrics.incrementTimeoutRequests()
-		return nil, NewRemotingError(ErrCodeRequestTimeout, fmt.Sprintf("request timeout after %dms", timeoutMs), nil)
+		return nil, NewRemotingError(connection.ErrCodeConnectionTimeout, fmt.Sprintf("request timeout after %dms", timeoutMs), nil)
 	case <-rc.ctx.Done():
-		return nil, NewRemotingError(ErrCodeClientClosed, "client context cancelled", nil)
+		return nil, NewRemotingError(connection.ErrCodePoolClosed, "client context cancelled", nil)
 	}
 }
 
 // SendAsync 异步发送请求
-func (rc *RemotingClient) SendAsync(addr string, request *protocol.RemotingCommand, timeoutMs int64, callback ResponseCallback) error {
+func (rc *RemotingClient) SendAsync(addr string, request *RemotingCommand, timeoutMs int64, callback ResponseCallback) error {
 	if atomic.LoadInt32(&rc.closed) == 1 {
-		return NewRemotingError(ErrCodeClientClosed, "client is closed", nil)
+		return NewRemotingError(connection.ErrCodePoolClosed, "client is closed", nil)
 	}
 
 	// 使用连接池获取连接
 	conn, err := rc.connectionPool.GetConnection(addr)
 	if err != nil {
-		return NewRemotingError(ErrCodeConnectionFailed, fmt.Sprintf("failed to get connection to %s", addr), err)
+		return NewRemotingError(connection.ErrCodeConnectionFailed, fmt.Sprintf("failed to get connection to %s", addr), err)
 	}
 
 	// 设置请求ID
@@ -359,15 +361,15 @@ func (rc *RemotingClient) SendAsync(addr string, request *protocol.RemotingComma
 }
 
 // SendOneway 单向发送请求（不等待响应）
-func (rc *RemotingClient) SendOneway(addr string, request *protocol.RemotingCommand) error {
+func (rc *RemotingClient) SendOneway(addr string, request *RemotingCommand) error {
 	if atomic.LoadInt32(&rc.closed) == 1 {
-		return NewRemotingError(ErrCodeClientClosed, "client is closed", nil)
+		return NewRemotingError(connection.ErrCodePoolClosed, "client is closed", nil)
 	}
 
 	// 使用连接池获取连接
 	conn, err := rc.connectionPool.GetConnection(addr)
 	if err != nil {
-		return NewRemotingError(ErrCodeConnectionFailed, fmt.Sprintf("failed to get connection to %s", addr), err)
+		return NewRemotingError(connection.ErrCodeConnectionFailed, fmt.Sprintf("failed to get connection to %s", addr), err)
 	}
 
 	// 设置单向标志
@@ -388,9 +390,9 @@ func (rc *RemotingClient) shouldRetry(err error, attempt int) bool {
 	if remotingErr, ok := err.(*RemotingError); ok {
 		// 某些错误不应该重试
 		switch remotingErr.Code {
-		case ErrCodeInvalidRequest, ErrCodeAuthenticationFailed:
+		case connection.ErrCodeInvalidAddress, connection.ErrCodeConnectionFailed:
 			return false
-		case ErrCodeRequestTimeout:
+		case connection.ErrCodeConnectionTimeout:
 			return rc.errorConfig.TimeoutRetryEnabled
 		}
 	}
@@ -399,14 +401,14 @@ func (rc *RemotingClient) shouldRetry(err error, attempt int) bool {
 }
 
 // sendRequest 发送请求到指定连接
-func (rc *RemotingClient) sendRequest(conn *PooledConnection, request *protocol.RemotingCommand) error {
+func (rc *RemotingClient) sendRequest(conn *connection.PooledConnection, request *RemotingCommand) error {
 	// 使用连接池连接发送请求
 	// 这里简化实现，实际应该通过连接发送数据
 
 	// 序列化请求
 	_, err := rc.encodeRemotingCommand(request)
 	if err != nil {
-		return NewRemotingError(ErrCodeEncodeFailed, "failed to encode request", err)
+		return NewRemotingError(connection.ErrCodeEncodeFailed, "failed to encode request", err)
 	}
 
 	// 发送数据（简化实现）
@@ -416,11 +418,11 @@ func (rc *RemotingClient) sendRequest(conn *PooledConnection, request *protocol.
 }
 
 // encodeRemotingCommand 编码RemotingCommand
-func (rc *RemotingClient) encodeRemotingCommand(cmd *protocol.RemotingCommand) ([]byte, error) {
+func (rc *RemotingClient) encodeRemotingCommand(cmd *RemotingCommand) ([]byte, error) {
 	// 序列化header
 	headerData, err := json.Marshal(cmd)
 	if err != nil {
-		return nil, NewRemotingError(ErrCodeEncodeFailed, "failed to marshal command header", err)
+		return nil, NewRemotingError(connection.ErrCodeEncodeFailed, "failed to marshal command header", err)
 	}
 
 	headerLength := len(headerData)
@@ -449,34 +451,34 @@ func (rc *RemotingClient) encodeRemotingCommand(cmd *protocol.RemotingCommand) (
 }
 
 // decodeRemotingCommand 解码RemotingCommand
-func (rc *RemotingClient) decodeRemotingCommand(reader *bufio.Reader) (*protocol.RemotingCommand, error) {
+func (rc *RemotingClient) decodeRemotingCommand(reader *bufio.Reader) (*RemotingCommand, error) {
 	// 读取总长度
 	var totalLength int32
 	if err := binary.Read(reader, binary.BigEndian, &totalLength); err != nil {
-		return nil, NewRemotingError(ErrCodeDecodeFailed, "failed to read total length", err)
+		return nil, NewRemotingError(connection.ErrCodeDecodeFailed, "failed to read total length", err)
 	}
 
 	if totalLength <= 0 || totalLength > 16*1024*1024 { // 16MB限制
-		return nil, NewRemotingError(ErrCodeInvalidResponse, fmt.Sprintf("invalid total length: %d", totalLength), nil)
+		return nil, NewRemotingError(connection.ErrCodeInvalidResponse, fmt.Sprintf("invalid total length: %d", totalLength), nil)
 	}
 
 	// 读取header长度和序列化类型
 	var headerLengthAndSerializeType int32
 	if err := binary.Read(reader, binary.BigEndian, &headerLengthAndSerializeType); err != nil {
-		return nil, NewRemotingError(ErrCodeDecodeFailed, "failed to read header length", err)
+		return nil, NewRemotingError(connection.ErrCodeDecodeFailed, "failed to read header length", err)
 	}
 
 	headerLength := (headerLengthAndSerializeType >> 8) & 0xFFFFFF
 	serializeType := headerLengthAndSerializeType & 0xFF
 
 	if headerLength <= 0 || headerLength > totalLength-4 {
-		return nil, NewRemotingError(ErrCodeInvalidResponse, fmt.Sprintf("invalid header length: %d", headerLength), nil)
+		return nil, NewRemotingError(connection.ErrCodeInvalidResponse, fmt.Sprintf("invalid header length: %d", headerLength), nil)
 	}
 
 	// 读取header数据
 	headerData := make([]byte, headerLength)
 	if _, err := io.ReadFull(reader, headerData); err != nil {
-		return nil, NewRemotingError(ErrCodeDecodeFailed, "failed to read header data", err)
+		return nil, NewRemotingError(connection.ErrCodeDecodeFailed, "failed to read header data", err)
 	}
 
 	// 读取body数据
@@ -485,18 +487,18 @@ func (rc *RemotingClient) decodeRemotingCommand(reader *bufio.Reader) (*protocol
 	if bodyLength > 0 {
 		bodyData = make([]byte, bodyLength)
 		if _, err := io.ReadFull(reader, bodyData); err != nil {
-			return nil, NewRemotingError(ErrCodeDecodeFailed, "failed to read body data", err)
+			return nil, NewRemotingError(connection.ErrCodeDecodeFailed, "failed to read body data", err)
 		}
 	}
 
 	// 反序列化header
-	var cmd protocol.RemotingCommand
+	var cmd RemotingCommand
 	if serializeType == 0 { // JSON
 		if err := json.Unmarshal(headerData, &cmd); err != nil {
-			return nil, NewRemotingError(ErrCodeDecodeFailed, "failed to unmarshal command header", err)
+			return nil, NewRemotingError(connection.ErrCodeDecodeFailed, "failed to unmarshal command header", err)
 		}
 	} else {
-		return nil, NewRemotingError(ErrCodeDecodeFailed, fmt.Sprintf("unsupported serialize type: %d", serializeType), nil)
+		return nil, NewRemotingError(connection.ErrCodeDecodeFailed, fmt.Sprintf("unsupported serialize type: %d", serializeType), nil)
 	}
 
 	cmd.Body = bodyData
@@ -520,7 +522,7 @@ func (rc *RemotingClient) cleanupRequests() {
 
 			// 通知超时
 			if future.Callback != nil {
-				go future.Callback(nil, NewRemotingError(ErrCodeRequestTimeout, "request timeout", nil))
+				go future.Callback(nil, NewRemotingError(connection.ErrCodeConnectionTimeout, "request timeout", nil))
 			} else if future.Done != nil {
 				select {
 				case future.Done <- nil:

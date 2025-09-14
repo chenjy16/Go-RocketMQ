@@ -3,11 +3,13 @@ package client
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
+	"math/rand"
 	"sync"
 	"time"
-	"math/rand"
-	"encoding/json"
+
+	"go-rocketmq/pkg/common"
 )
 
 // TransactionProducer 事务消息生产者
@@ -19,8 +21,8 @@ type TransactionProducer struct {
 
 // TransactionCheckExecutor 事务检查执行器
 type TransactionCheckExecutor struct {
-	listener TransactionListener
-	mutex    sync.RWMutex
+	listener              TransactionListener
+	mutex                 sync.RWMutex
 	transactionStateTable map[string]*TransactionState
 }
 
@@ -57,7 +59,7 @@ func NewTransactionProducer(groupName string, listener TransactionListener) *Tra
 		listener:              listener,
 		transactionStateTable: make(map[string]*TransactionState),
 	}
-	
+
 	return &TransactionProducer{
 		Producer:            producer,
 		transactionListener: listener,
@@ -70,30 +72,30 @@ func (tp *TransactionProducer) SendMessageInTransaction(msg *Message, arg interf
 	if !tp.started {
 		return nil, fmt.Errorf("transaction producer not started")
 	}
-	
+
 	if tp.transactionListener == nil {
 		return nil, fmt.Errorf("transaction listener is nil")
 	}
-	
+
 	// 1. 发送半消息（Prepare消息）
 	prepareMsg := *msg
 	prepareMsg.SetProperty("TRAN_MSG", "true")
 	prepareMsg.SetProperty("PREPARE_MESSAGE", "true")
-	
+
 	result, err := tp.Producer.SendSync(&prepareMsg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send prepare message: %v", err)
 	}
-	
+
 	// 2. 执行本地事务
 	localTransactionState := tp.transactionListener.ExecuteLocalTransaction(msg, arg)
-	
+
 	// 3. 根据本地事务执行结果，提交或回滚事务
 	err = tp.endTransaction(result.MsgId, localTransactionState)
 	if err != nil {
 		return nil, fmt.Errorf("failed to end transaction: %v", err)
 	}
-	
+
 	return result, nil
 }
 
@@ -109,7 +111,7 @@ func (tp *TransactionProducer) endTransaction(msgId string, state LocalTransacti
 	default:
 		transactionStatus = UnknownTransaction
 	}
-	
+
 	// 发送事务结束请求到Broker
 	return tp.sendEndTransactionRequest(msgId, transactionStatus)
 }
@@ -121,7 +123,7 @@ func (tp *TransactionProducer) sendEndTransactionRequest(msgId string, status Tr
 	if err != nil {
 		return fmt.Errorf("failed to get broker address: %v", err)
 	}
-	
+
 	// 构建事务结束请求
 	request := &EndTransactionRequest{
 		MsgId:             msgId,
@@ -129,7 +131,7 @@ func (tp *TransactionProducer) sendEndTransactionRequest(msgId string, status Tr
 		ProducerGroup:     tp.getProducerGroup(),
 		Timestamp:         time.Now().UnixMilli(),
 	}
-	
+
 	// 发送请求
 	return tp.sendTransactionRequest(brokerAddr, request)
 }
@@ -140,7 +142,7 @@ func (tp *TransactionProducer) getBrokerAddr() (string, error) {
 	if len(tp.Producer.nameServers) == 0 {
 		return "", fmt.Errorf("no name servers configured")
 	}
-	
+
 	// 简化实现：使用第一个NameServer地址作为Broker地址
 	// 实际应该通过路由发现获取真实的Broker地址
 	return tp.Producer.nameServers[0], nil
@@ -153,7 +155,7 @@ func (tp *TransactionProducer) sendTransactionRequest(brokerAddr string, request
 	if err != nil {
 		return fmt.Errorf("failed to encode request: %v", err)
 	}
-	
+
 	// 构建RemotingCommand
 	cmd := &RemotingCommand{
 		Code:     END_TRANSACTION_CODE,
@@ -163,7 +165,7 @@ func (tp *TransactionProducer) sendTransactionRequest(brokerAddr string, request
 		Flag:     0,
 		Body:     body,
 	}
-	
+
 	// 添加请求头
 	cmd.ExtFields = map[string]string{
 		"msgId":             request.MsgId,
@@ -171,18 +173,18 @@ func (tp *TransactionProducer) sendTransactionRequest(brokerAddr string, request
 		"producerGroup":     request.ProducerGroup,
 		"timestamp":         fmt.Sprintf("%d", request.Timestamp),
 	}
-	
+
 	// 发送请求并等待响应
 	response, err := tp.sendTransactionSyncRequest(brokerAddr, cmd)
 	if err != nil {
 		return fmt.Errorf("failed to send transaction request: %v", err)
 	}
-	
+
 	// 检查响应状态
 	if response.Code != TRANSACTION_SUCCESS {
 		return fmt.Errorf("transaction request failed with code: %d, remark: %s", response.Code, response.Remark)
 	}
-	
+
 	return nil
 }
 
@@ -201,7 +203,7 @@ func (tp *TransactionProducer) sendTransactionSyncRequest(brokerAddr string, cmd
 	// 简化实现：模拟发送请求
 	// 实际应该通过网络连接发送到Broker
 	fmt.Printf("Sending transaction request to broker: %s, msgId: %s\n", brokerAddr, cmd.ExtFields["msgId"])
-	
+
 	// 返回成功响应
 	return &RemotingCommand{
 		Code:   TRANSACTION_SUCCESS,
@@ -223,7 +225,7 @@ func (tp *TransactionProducer) CheckTransactionState(msgExt *MessageExt) LocalTr
 	if tp.transactionListener == nil {
 		return UnknownMessage
 	}
-	
+
 	return tp.checkExecutor.CheckTransactionState(msgExt)
 }
 
@@ -231,16 +233,16 @@ func (tp *TransactionProducer) CheckTransactionState(msgExt *MessageExt) LocalTr
 func (tce *TransactionCheckExecutor) CheckTransactionState(msgExt *MessageExt) LocalTransactionState {
 	tce.mutex.Lock()
 	defer tce.mutex.Unlock()
-	
+
 	// 获取或创建事务状态
 	transactionState := tce.getOrCreateTransactionState(msgExt.MsgId, msgExt.TransactionId)
 	transactionState.CheckTimes++
 	transactionState.UpdateTime = time.Now()
-	
+
 	// 调用用户的事务检查逻辑
 	state := tce.listener.CheckLocalTransaction(msgExt)
 	transactionState.State = state
-	
+
 	return state
 }
 
@@ -249,7 +251,7 @@ func (tce *TransactionCheckExecutor) getOrCreateTransactionState(msgId, transact
 	if state, exists := tce.transactionStateTable[msgId]; exists {
 		return state
 	}
-	
+
 	state := &TransactionState{
 		MsgId:         msgId,
 		TransactionId: transactionId,
@@ -281,22 +283,22 @@ func (p *Producer) SendOrderedMessage(msg *Message, selector MessageQueueSelecto
 	if !p.started {
 		return nil, fmt.Errorf("producer not started")
 	}
-	
+
 	if selector == nil {
 		return nil, fmt.Errorf("message queue selector is nil")
 	}
-	
+
 	// 获取Topic路由信息
 	routeData := p.getTopicRouteData(msg.Topic)
 	if routeData == nil {
 		return nil, fmt.Errorf("no route data for topic: %s", msg.Topic)
 	}
-	
+
 	// 构造消息队列列表
-	var messageQueues []*MessageQueue
+	var messageQueues []*common.MessageQueue
 	for _, queueData := range routeData.QueueDatas {
 		for i := int32(0); i < queueData.WriteQueueNums; i++ {
-			mq := &MessageQueue{
+			mq := &common.MessageQueue{
 				Topic:      msg.Topic,
 				BrokerName: queueData.BrokerName,
 				QueueId:    i,
@@ -304,16 +306,33 @@ func (p *Producer) SendOrderedMessage(msg *Message, selector MessageQueueSelecto
 			messageQueues = append(messageQueues, mq)
 		}
 	}
-	
+
+	// 转换为client.MessageQueue类型以兼容MessageQueueSelector
+	clientMessageQueues := make([]*MessageQueue, len(messageQueues))
+	for i, mq := range messageQueues {
+		clientMessageQueues[i] = &MessageQueue{
+			Topic:      mq.Topic,
+			BrokerName: mq.BrokerName,
+			QueueId:    mq.QueueId,
+		}
+	}
+
 	// 使用选择器选择消息队列
-	selectedQueue := selector.Select(messageQueues, msg, arg)
-	if selectedQueue == nil {
+	selectedClientQueue := selector.Select(clientMessageQueues, msg, arg)
+	if selectedClientQueue == nil {
 		return nil, fmt.Errorf("no message queue selected")
 	}
-	
+
+	// 转换回common.MessageQueue
+	selectedQueue := &common.MessageQueue{
+		Topic:      selectedClientQueue.Topic,
+		BrokerName: selectedClientQueue.BrokerName,
+		QueueId:    selectedClientQueue.QueueId,
+	}
+
 	// 标记为顺序消息
 	msg.SetProperty("ORDERED_MESSAGE", "true")
-	
+
 	// 发送到指定队列
 	return p.sendMessageToQueue(msg, selectedQueue, p.config.SendMsgTimeout)
 }
@@ -323,15 +342,15 @@ func (p *Producer) SendDelayMessage(msg *Message, delayLevel int32) (*SendResult
 	if !p.started {
 		return nil, fmt.Errorf("producer not started")
 	}
-	
+
 	if delayLevel < 1 || delayLevel > 18 {
 		return nil, fmt.Errorf("invalid delay level: %d, should be 1-18", delayLevel)
 	}
-	
+
 	// 设置延时级别
 	msg.SetDelayTimeLevel(delayLevel)
 	msg.SetProperty("DELAY_MESSAGE", "true")
-	
+
 	return p.SendSync(msg)
 }
 
@@ -340,63 +359,22 @@ func (p *Producer) SendScheduledMessage(msg *Message, deliverTime time.Time) (*S
 	if !p.started {
 		return nil, fmt.Errorf("producer not started")
 	}
-	
+
 	if deliverTime.Before(time.Now()) {
 		return nil, fmt.Errorf("deliver time should be in the future")
 	}
-	
+
 	// 设置开始投递时间
 	msg.SetStartDeliverTime(deliverTime.UnixMilli())
 	msg.SetProperty("SCHEDULED_MESSAGE", "true")
-	
-	return p.SendSync(msg)
-}
 
-// SendBatchMessages 发送批量消息
-func (p *Producer) SendBatchMessages(messages []*Message) (*SendResult, error) {
-	if !p.started {
-		return nil, fmt.Errorf("producer not started")
-	}
-	
-	if len(messages) == 0 {
-		return nil, fmt.Errorf("messages list is empty")
-	}
-	
-	// 验证所有消息都属于同一个Topic
-	topic := messages[0].Topic
-	for _, msg := range messages {
-		if msg.Topic != topic {
-			return nil, fmt.Errorf("all messages in batch must have the same topic")
-		}
-	}
-	
-	// 使用复杂的批量消息编码格式
-	batchBody, err := p.encodeBatchMessages(messages)
-	if err != nil {
-		return nil, fmt.Errorf("failed to encode batch messages: %v", err)
-	}
-	
-	if len(batchBody) > int(p.config.MaxMessageSize) {
-		return nil, fmt.Errorf("batch messages size exceeds limit: %d", p.config.MaxMessageSize)
-	}
-	
-	// 创建批量消息
-	batchMsg := &Message{
-		Topic:      topic,
-		Properties: make(map[string]string),
-		Body:       batchBody,
-	}
-	batchMsg.SetProperty("BATCH_MESSAGE", "true")
-	batchMsg.SetProperty("BATCH_SIZE", fmt.Sprintf("%d", len(messages)))
-	batchMsg.SetProperty("BATCH_ENCODING", "ROCKETMQ_V1")
-	
-	return p.SendSync(batchMsg)
+	return p.SendSync(msg)
 }
 
 // encodeBatchMessages 编码批量消息，使用类似RocketMQ的复杂编码格式
 func (p *Producer) encodeBatchMessages(messages []*Message) ([]byte, error) {
 	var buffer bytes.Buffer
-	
+
 	// 写入批量消息头部信息
 	header := &BatchMessageHeader{
 		Magic:        0x12345678, // 魔数
@@ -404,29 +382,29 @@ func (p *Producer) encodeBatchMessages(messages []*Message) ([]byte, error) {
 		MessageCount: int32(len(messages)),
 		Timestamp:    time.Now().UnixMilli(),
 	}
-	
+
 	if err := p.writeBatchHeader(&buffer, header); err != nil {
 		return nil, fmt.Errorf("failed to write batch header: %v", err)
 	}
-	
+
 	// 编码每个消息
 	for i, msg := range messages {
 		encodedMsg, err := p.encodeMessage(msg, int32(i))
 		if err != nil {
 			return nil, fmt.Errorf("failed to encode message %d: %v", i, err)
 		}
-		
+
 		// 写入消息长度（4字节）
 		if err := binary.Write(&buffer, binary.BigEndian, int32(len(encodedMsg))); err != nil {
 			return nil, fmt.Errorf("failed to write message length: %v", err)
 		}
-		
+
 		// 写入消息数据
 		if _, err := buffer.Write(encodedMsg); err != nil {
 			return nil, fmt.Errorf("failed to write message data: %v", err)
 		}
 	}
-	
+
 	return buffer.Bytes(), nil
 }
 
@@ -458,7 +436,7 @@ func (p *Producer) writeBatchHeader(buffer *bytes.Buffer, header *BatchMessageHe
 // encodeMessage 编码单个消息
 func (p *Producer) encodeMessage(msg *Message, index int32) ([]byte, error) {
 	var buffer bytes.Buffer
-	
+
 	// 消息头部
 	msgHeader := &MessageHeader{
 		Index:      index,
@@ -466,12 +444,12 @@ func (p *Producer) encodeMessage(msg *Message, index int32) ([]byte, error) {
 		Flag:       p.calculateMessageFlag(msg),
 		Timestamp:  time.Now().UnixMilli(),
 	}
-	
+
 	// 写入消息头部
 	if err := p.writeMessageHeader(&buffer, msgHeader); err != nil {
 		return nil, fmt.Errorf("failed to write message header: %v", err)
 	}
-	
+
 	// 写入Topic长度和内容
 	topicBytes := []byte(msg.Topic)
 	if err := binary.Write(&buffer, binary.BigEndian, int16(len(topicBytes))); err != nil {
@@ -480,7 +458,7 @@ func (p *Producer) encodeMessage(msg *Message, index int32) ([]byte, error) {
 	if _, err := buffer.Write(topicBytes); err != nil {
 		return nil, err
 	}
-	
+
 	// 写入Tags（如果存在）
 	tags := msg.Tags
 	tagsBytes := []byte(tags)
@@ -492,7 +470,7 @@ func (p *Producer) encodeMessage(msg *Message, index int32) ([]byte, error) {
 			return nil, err
 		}
 	}
-	
+
 	// 写入Keys（如果存在）
 	keys := msg.Keys
 	keysBytes := []byte(keys)
@@ -504,7 +482,7 @@ func (p *Producer) encodeMessage(msg *Message, index int32) ([]byte, error) {
 			return nil, err
 		}
 	}
-	
+
 	// 写入Properties
 	propertiesData, err := p.encodeProperties(msg.Properties)
 	if err != nil {
@@ -518,12 +496,12 @@ func (p *Producer) encodeMessage(msg *Message, index int32) ([]byte, error) {
 			return nil, err
 		}
 	}
-	
+
 	// 写入消息体
 	if _, err := buffer.Write(msg.Body); err != nil {
 		return nil, err
 	}
-	
+
 	return buffer.Bytes(), nil
 }
 
@@ -555,7 +533,7 @@ func (p *Producer) writeMessageHeader(buffer *bytes.Buffer, header *MessageHeade
 // calculateMessageFlag 计算消息标志
 func (p *Producer) calculateMessageFlag(msg *Message) int32 {
 	var flag int32 = 0
-	
+
 	// 检查消息类型
 	if msg.IsTransactionMessage() {
 		flag |= 0x01 // 事务消息标志
@@ -566,12 +544,12 @@ func (p *Producer) calculateMessageFlag(msg *Message) int32 {
 	if msg.IsOrderedMessage() {
 		flag |= 0x04 // 顺序消息标志
 	}
-	
+
 	// 检查压缩
 	if len(msg.Body) > 4096 { // 大于4KB的消息考虑压缩
 		flag |= 0x08 // 压缩标志
 	}
-	
+
 	return flag
 }
 
@@ -580,14 +558,14 @@ func (p *Producer) encodeProperties(properties map[string]string) ([]byte, error
 	if len(properties) == 0 {
 		return nil, nil
 	}
-	
+
 	var buffer bytes.Buffer
-	
+
 	// 写入属性数量
 	if err := binary.Write(&buffer, binary.BigEndian, int32(len(properties))); err != nil {
 		return nil, err
 	}
-	
+
 	// 写入每个属性
 	for key, value := range properties {
 		// 写入key长度和内容
@@ -598,7 +576,7 @@ func (p *Producer) encodeProperties(properties map[string]string) ([]byte, error
 		if _, err := buffer.Write(keyBytes); err != nil {
 			return nil, err
 		}
-		
+
 		// 写入value长度和内容
 		valueBytes := []byte(value)
 		if err := binary.Write(&buffer, binary.BigEndian, int16(len(valueBytes))); err != nil {
@@ -608,7 +586,7 @@ func (p *Producer) encodeProperties(properties map[string]string) ([]byte, error
 			return nil, err
 		}
 	}
-	
+
 	return buffer.Bytes(), nil
 }
 
@@ -620,25 +598,25 @@ func (s *DefaultMessageQueueSelector) Select(mqs []*MessageQueue, msg *Message, 
 	if len(mqs) == 0 {
 		return nil
 	}
-	
+
 	// 如果有分片键，使用分片键的哈希值
 	if msg.ShardingKey != "" {
 		hash := simpleHash(msg.ShardingKey)
 		return mqs[hash%len(mqs)]
 	}
-	
+
 	// 如果传入了参数，使用参数的哈希值
 	if arg != nil {
 		hash := simpleHash(fmt.Sprintf("%v", arg))
 		return mqs[hash%len(mqs)]
 	}
-	
+
 	// 默认使用消息键的哈希值
 	if msg.Keys != "" {
 		hash := simpleHash(msg.Keys)
 		return mqs[hash%len(mqs)]
 	}
-	
+
 	// 最后使用轮询方式
 	return mqs[0]
 }
@@ -651,25 +629,25 @@ func (s *OrderedMessageQueueSelector) Select(mqs []*MessageQueue, msg *Message, 
 	if len(mqs) == 0 {
 		return nil
 	}
-	
+
 	// 优先使用分片键
 	if msg.ShardingKey != "" {
 		hash := simpleHash(msg.ShardingKey)
 		return mqs[hash%len(mqs)]
 	}
-	
+
 	// 使用传入的参数作为分片键
 	if arg != nil {
 		hash := simpleHash(fmt.Sprintf("%v", arg))
 		return mqs[hash%len(mqs)]
 	}
-	
+
 	// 使用消息键
 	if msg.Keys != "" {
 		hash := simpleHash(msg.Keys)
 		return mqs[hash%len(mqs)]
 	}
-	
+
 	// 如果没有任何键，返回第一个队列
 	return mqs[0]
 }
@@ -685,10 +663,10 @@ func (s *RoundRobinMessageQueueSelector) Select(mqs []*MessageQueue, msg *Messag
 	if len(mqs) == 0 {
 		return nil
 	}
-	
+
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
-	
+
 	selected := mqs[s.counter%len(mqs)]
 	s.counter++
 	return selected

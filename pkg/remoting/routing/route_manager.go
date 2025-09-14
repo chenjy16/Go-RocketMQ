@@ -1,4 +1,4 @@
-package remoting
+package routing
 
 import (
 	"context"
@@ -9,21 +9,21 @@ import (
 	"sync"
 	"time"
 
-	"go-rocketmq/pkg/protocol"
+	"go-rocketmq/pkg/remoting"
 )
 
 // RouteManager 路由管理器
 type RouteManager struct {
-	nameServerAddrs []string
-	connectionPool  *ConnectionPool
-	topicRouteTable sync.Map // map[string]*protocol.TopicRouteData
-	brokerAddrTable sync.Map // map[string]map[int64]string
+	nameServerAddrs  []string
+	remotingClient   *remoting.RemotingClientWrapper
+	topicRouteTable  sync.Map // map[string]*remoting.TopicRouteData
+	brokerAddrTable  sync.Map // map[string]map[int64]string
 	clusterAddrTable sync.Map // map[string][]string
-	mutex           sync.RWMutex
-	updateInterval  time.Duration
-	ctx             context.Context
-	cancel          context.CancelFunc
-	wg              sync.WaitGroup
+	mutex            sync.RWMutex
+	updateInterval   time.Duration
+	ctx              context.Context
+	cancel           context.CancelFunc
+	wg               sync.WaitGroup
 }
 
 // BrokerInfo Broker信息
@@ -42,11 +42,11 @@ type MessageQueue struct {
 }
 
 // NewRouteManager 创建路由管理器
-func NewRouteManager(nameServerAddrs []string, connectionPool *ConnectionPool) *RouteManager {
+func NewRouteManager(nameServerAddrs []string, remotingClient *remoting.RemotingClientWrapper) *RouteManager {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &RouteManager{
 		nameServerAddrs: nameServerAddrs,
-		connectionPool:  connectionPool,
+		remotingClient:  remotingClient,
 		updateInterval:  30 * time.Second, // 默认30秒更新一次路由
 		ctx:             ctx,
 		cancel:          cancel,
@@ -68,10 +68,10 @@ func (rm *RouteManager) Stop() {
 // updateRouteRoutine 路由更新例程
 func (rm *RouteManager) updateRouteRoutine() {
 	defer rm.wg.Done()
-	
+
 	ticker := time.NewTicker(rm.updateInterval)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-ticker.C:
@@ -89,7 +89,7 @@ func (rm *RouteManager) updateAllTopicRoutes() {
 		topics = append(topics, key.(string))
 		return true
 	})
-	
+
 	for _, topic := range topics {
 		rm.UpdateTopicRoute(topic)
 	}
@@ -102,18 +102,18 @@ func (rm *RouteManager) UpdateTopicRoute(topic string) error {
 	if err != nil {
 		return fmt.Errorf("failed to get route for topic %s: %v", topic, err)
 	}
-	
+
 	if routeData == nil {
 		return fmt.Errorf("no route data for topic %s", topic)
 	}
-	
+
 	// 更新路由表
 	rm.topicRouteTable.Store(topic, routeData)
-	
+
 	// 更新Broker地址表
 	for _, brokerData := range routeData.BrokerDatas {
 		rm.brokerAddrTable.Store(brokerData.BrokerName, brokerData.BrokerAddrs)
-		
+
 		// 更新集群地址表
 		if clusterAddrs, exists := rm.clusterAddrTable.Load(brokerData.Cluster); exists {
 			addrs := clusterAddrs.([]string)
@@ -132,53 +132,53 @@ func (rm *RouteManager) UpdateTopicRoute(topic string) error {
 			rm.clusterAddrTable.Store(brokerData.Cluster, []string{brokerData.BrokerName})
 		}
 	}
-	
+
 	return nil
 }
 
 // getTopicRouteFromNameServer 从NameServer获取Topic路由
-func (rm *RouteManager) getTopicRouteFromNameServer(topic string) (*protocol.TopicRouteData, error) {
+func (rm *RouteManager) getTopicRouteFromNameServer(topic string) (*remoting.TopicRouteData, error) {
 	// 创建请求
-	request := protocol.CreateRemotingCommand(protocol.GetRouteInfoByTopic)
+	request := remoting.CreateRemotingCommand(remoting.GetRouteInfoByTopic)
 	request.ExtFields = map[string]string{
 		"topic": topic,
 	}
-	
+
 	// 尝试从所有NameServer获取路由
 	for _, nameServerAddr := range rm.nameServerAddrs {
-		response, err := rm.connectionPool.SendSync(nameServerAddr, request)
+		response, err := rm.remotingClient.SendSync(nameServerAddr, request, 3000) // 3秒超时
 		if err != nil {
 			continue
 		}
-		
-		if protocol.ResponseCode(response.Code) == protocol.Success {
-			var routeData protocol.TopicRouteData
+
+		if remoting.ResponseCode(response.Code) == remoting.Success {
+			var routeData remoting.TopicRouteData
 			if err := json.Unmarshal(response.Body, &routeData); err != nil {
 				continue
 			}
 			return &routeData, nil
 		}
 	}
-	
+
 	return nil, fmt.Errorf("failed to get route from all name servers")
 }
 
 // GetTopicRoute 获取Topic路由信息
-func (rm *RouteManager) GetTopicRoute(topic string) (*protocol.TopicRouteData, error) {
+func (rm *RouteManager) GetTopicRoute(topic string) (*remoting.TopicRouteData, error) {
 	// 先从缓存获取
 	if routeValue, exists := rm.topicRouteTable.Load(topic); exists {
-		return routeValue.(*protocol.TopicRouteData), nil
+		return routeValue.(*remoting.TopicRouteData), nil
 	}
-	
+
 	// 缓存中没有，从NameServer获取
 	if err := rm.UpdateTopicRoute(topic); err != nil {
 		return nil, err
 	}
-	
+
 	if routeValue, exists := rm.topicRouteTable.Load(topic); exists {
-		return routeValue.(*protocol.TopicRouteData), nil
+		return routeValue.(*remoting.TopicRouteData), nil
 	}
-	
+
 	return nil, fmt.Errorf("no route found for topic %s", topic)
 }
 
@@ -188,7 +188,7 @@ func (rm *RouteManager) GetWriteQueues(topic string) ([]*MessageQueue, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	var queues []*MessageQueue
 	for _, queueData := range routeData.QueueDatas {
 		for i := int32(0); i < queueData.WriteQueueNums; i++ {
@@ -199,7 +199,7 @@ func (rm *RouteManager) GetWriteQueues(topic string) ([]*MessageQueue, error) {
 			})
 		}
 	}
-	
+
 	return queues, nil
 }
 
@@ -209,7 +209,7 @@ func (rm *RouteManager) GetReadQueues(topic string) ([]*MessageQueue, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	var queues []*MessageQueue
 	for _, queueData := range routeData.QueueDatas {
 		for i := int32(0); i < queueData.ReadQueueNums; i++ {
@@ -220,7 +220,7 @@ func (rm *RouteManager) GetReadQueues(topic string) ([]*MessageQueue, error) {
 			})
 		}
 	}
-	
+
 	return queues, nil
 }
 
@@ -230,11 +230,11 @@ func (rm *RouteManager) SelectQueue(topic string, lastBrokerName string) (*Messa
 	if err != nil {
 		return nil, err
 	}
-	
+
 	if len(queues) == 0 {
 		return nil, fmt.Errorf("no available queues for topic %s", topic)
 	}
-	
+
 	// 如果指定了上次使用的Broker，尝试避免使用同一个Broker
 	if lastBrokerName != "" {
 		var availableQueues []*MessageQueue
@@ -247,7 +247,7 @@ func (rm *RouteManager) SelectQueue(topic string, lastBrokerName string) (*Messa
 			queues = availableQueues
 		}
 	}
-	
+
 	// 随机选择一个队列
 	index := rand.Intn(len(queues))
 	return queues[index], nil
@@ -280,9 +280,9 @@ func (rm *RouteManager) GetAllBrokerAddrs(brokerName string) (map[int64]string, 
 // GetAllBrokers 获取所有Broker信息
 func (rm *RouteManager) GetAllBrokers() []*BrokerInfo {
 	var brokers []*BrokerInfo
-	
+
 	rm.topicRouteTable.Range(func(key, value interface{}) bool {
-		routeData := value.(*protocol.TopicRouteData)
+		routeData := value.(*remoting.TopicRouteData)
 		for _, brokerData := range routeData.BrokerDatas {
 			for brokerId, brokerAddr := range brokerData.BrokerAddrs {
 				brokers = append(brokers, &BrokerInfo{
@@ -295,7 +295,7 @@ func (rm *RouteManager) GetAllBrokers() []*BrokerInfo {
 		}
 		return true
 	})
-	
+
 	return brokers
 }
 
@@ -345,12 +345,12 @@ func (rm *RouteManager) ClearAllRoutes() {
 		rm.topicRouteTable.Delete(key)
 		return true
 	})
-	
+
 	rm.brokerAddrTable.Range(func(key, value interface{}) bool {
 		rm.brokerAddrTable.Delete(key)
 		return true
 	})
-	
+
 	rm.clusterAddrTable.Range(func(key, value interface{}) bool {
 		rm.clusterAddrTable.Delete(key)
 		return true
@@ -374,7 +374,7 @@ func (rm *RouteManager) GetUpdateInterval() time.Duration {
 // GetRouteStats 获取路由统计信息
 func (rm *RouteManager) GetRouteStats() map[string]interface{} {
 	stats := make(map[string]interface{})
-	
+
 	// 统计Topic数量
 	topicCount := 0
 	rm.topicRouteTable.Range(func(key, value interface{}) bool {
@@ -382,7 +382,7 @@ func (rm *RouteManager) GetRouteStats() map[string]interface{} {
 		return true
 	})
 	stats["topic_count"] = topicCount
-	
+
 	// 统计Broker数量
 	brokerCount := 0
 	rm.brokerAddrTable.Range(func(key, value interface{}) bool {
@@ -390,7 +390,7 @@ func (rm *RouteManager) GetRouteStats() map[string]interface{} {
 		return true
 	})
 	stats["broker_count"] = brokerCount
-	
+
 	// 统计集群数量
 	clusterCount := 0
 	rm.clusterAddrTable.Range(func(key, value interface{}) bool {
@@ -398,10 +398,10 @@ func (rm *RouteManager) GetRouteStats() map[string]interface{} {
 		return true
 	})
 	stats["cluster_count"] = clusterCount
-	
+
 	stats["name_server_addrs"] = rm.nameServerAddrs
 	stats["update_interval"] = rm.updateInterval.String()
-	
+
 	return stats
 }
 
@@ -411,15 +411,15 @@ func (rm *RouteManager) ValidateRoute(topic string) error {
 	if err != nil {
 		return err
 	}
-	
+
 	if len(routeData.QueueDatas) == 0 {
 		return fmt.Errorf("no queue data for topic %s", topic)
 	}
-	
+
 	if len(routeData.BrokerDatas) == 0 {
 		return fmt.Errorf("no broker data for topic %s", topic)
 	}
-	
+
 	// 验证每个队列都有对应的Broker
 	for _, queueData := range routeData.QueueDatas {
 		found := false
@@ -433,6 +433,6 @@ func (rm *RouteManager) ValidateRoute(topic string) error {
 			return fmt.Errorf("queue broker %s not found in broker data for topic %s", queueData.BrokerName, topic)
 		}
 	}
-	
+
 	return nil
 }

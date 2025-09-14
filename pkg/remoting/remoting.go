@@ -1,8 +1,18 @@
-package protocol
+package remoting
 
 import (
+	"bufio"
+	"context"
+	"fmt"
+	"net"
+	"sync"
 	"time"
+
+	"go-rocketmq/pkg/remoting/client"
+	"go-rocketmq/pkg/remoting/server"
 )
+
+// ========== PROTOCOL DEFINITIONS (merged from protocol package) ==========
 
 // DataVersion 数据版本
 type DataVersion struct {
@@ -346,4 +356,155 @@ func CreateResponseCommand(code ResponseCode, remark string) *RemotingCommand {
 		Remark:    remark,
 		ExtFields: make(map[string]string),
 	}
+}
+
+// ========== REMOTING DEFINITIONS ==========
+
+// RemotingClient RocketMQ远程通信客户端接口
+type RemotingClient struct {
+	connections  sync.Map // map[string]*Connection
+	requestTable sync.Map // map[int32]*ResponseFuture
+	opaque       int32    // 请求序列号
+	closed       int32    // 关闭标志
+	ctx          context.Context
+	cancel       context.CancelFunc
+}
+
+// ResponseCallback 响应回调
+type ResponseCallback func(*RemotingCommand, error)
+
+// Connection TCP连接封装
+type Connection struct {
+	addr     string
+	conn     net.Conn
+	reader   *bufio.Reader
+	writer   *bufio.Writer
+	mutex    sync.RWMutex
+	lastUsed time.Time
+	closed   bool
+}
+
+// RemotingError 远程调用错误
+type RemotingError struct {
+	Code    int
+	Message string
+	Err     error
+}
+
+// Error 实现error接口
+func (e *RemotingError) Error() string {
+	if e.Err != nil {
+		return fmt.Sprintf("RemotingError[code=%d, message=%s]: %v", e.Code, e.Message, e.Err)
+	}
+	return fmt.Sprintf("RemotingError[code=%d, message=%s]", e.Code, e.Message)
+}
+
+// Unwrap 返回底层错误
+func (e *RemotingError) Unwrap() error {
+	return e.Err
+}
+
+// NewRemotingError 创建远程调用错误
+func NewRemotingError(code int, message string, err error) *RemotingError {
+	return &RemotingError{
+		Code:    code,
+		Message: message,
+		Err:     err,
+	}
+}
+
+// ServerConnection 服务端连接类型别名
+type ServerConnection = server.ServerConnection
+
+// RequestProcessor 请求处理器接口类型别名
+type RequestProcessor = server.RequestProcessor
+
+// RequestProcessorFunc 请求处理器函数类型别名
+type RequestProcessorFunc = server.RequestProcessorFunc
+
+// RemotingClientWrapper 包装器，用于暴露client.RemotingClient的方法
+type RemotingClientWrapper struct {
+	client *client.RemotingClient
+}
+
+// NewRemotingClient 创建远程通信客户端
+func NewRemotingClient() *RemotingClientWrapper {
+	return &RemotingClientWrapper{
+		client: client.NewRemotingClient(),
+	}
+}
+
+// convertToClientCommand converts remoting.RemotingCommand to client.RemotingCommand
+func convertToClientCommand(cmd *RemotingCommand) *client.RemotingCommand {
+	if cmd == nil {
+		return nil
+	}
+	return &client.RemotingCommand{
+		Code:      int32(cmd.Code),
+		Language:  cmd.Language,
+		Version:   cmd.Version,
+		Opaque:    cmd.Opaque,
+		Flag:      cmd.Flag,
+		Remark:    cmd.Remark,
+		ExtFields: cmd.ExtFields,
+		Body:      cmd.Body,
+	}
+}
+
+// convertFromClientCommand converts client.RemotingCommand to remoting.RemotingCommand
+func convertFromClientCommand(cmd *client.RemotingCommand) *RemotingCommand {
+	if cmd == nil {
+		return nil
+	}
+	return &RemotingCommand{
+		Code:      RequestCode(cmd.Code),
+		Language:  cmd.Language,
+		Version:   cmd.Version,
+		Opaque:    cmd.Opaque,
+		Flag:      cmd.Flag,
+		Remark:    cmd.Remark,
+		ExtFields: cmd.ExtFields,
+		Body:      cmd.Body,
+	}
+}
+
+// SendSync 同步发送请求
+func (rcw *RemotingClientWrapper) SendSync(addr string, request *RemotingCommand, timeoutMs int64) (*RemotingCommand, error) {
+	// Convert remoting command to client command
+	clientRequest := convertToClientCommand(request)
+
+	// Send request
+	clientResponse, err := rcw.client.SendSync(addr, clientRequest, timeoutMs)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert response back to remoting command
+	return convertFromClientCommand(clientResponse), nil
+}
+
+// Close 关闭客户端
+func (rcw *RemotingClientWrapper) Close() {
+	rcw.client.Close()
+}
+
+// RemotingServer 服务端类型别名
+type RemotingServer = server.RemotingServer
+
+// NewRemotingServer 创建远程通信服务端
+func NewRemotingServer(listenPort int) *RemotingServer {
+	return server.NewRemotingServer(listenPort)
+}
+
+// ProtocolProcessor 协议处理器接口
+type ProtocolProcessor interface {
+	RegisterProcessor(code RequestCode, processor interface{})
+	UnregisterProcessor(requestCode RequestCode)
+	ProcessRequest(ctx context.Context, conn *ServerConnection, request *RemotingCommand) (*RemotingCommand, error)
+}
+
+// NewProtocolProcessor 创建协议处理器
+func NewProtocolProcessor() ProtocolProcessor {
+	// 由于循环依赖，这里返回nil，实际使用时应该从processor包创建
+	return nil
 }

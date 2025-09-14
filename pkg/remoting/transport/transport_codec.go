@@ -1,4 +1,4 @@
-package remoting
+package transport
 
 import (
 	"bytes"
@@ -7,23 +7,24 @@ import (
 	"fmt"
 	"io"
 
-	"go-rocketmq/pkg/protocol"
+	"go-rocketmq/pkg/remoting"
+	"go-rocketmq/pkg/remoting/codec"
 )
 
 // TransportCodec 传输层编解码器
 type TransportCodec struct {
-	messageCodec *MessageCodec
+	messageCodec *codec.MessageCodec
 }
 
 // NewTransportCodec 创建传输层编解码器
 func NewTransportCodec() *TransportCodec {
 	return &TransportCodec{
-		messageCodec: NewMessageCodec(),
+		messageCodec: codec.NewMessageCodec(),
 	}
 }
 
 // EncodeRemotingCommand 编码RemotingCommand
-func (tc *TransportCodec) EncodeRemotingCommand(cmd *protocol.RemotingCommand) ([]byte, error) {
+func (tc *TransportCodec) EncodeRemotingCommand(cmd *remoting.RemotingCommand) ([]byte, error) {
 	if cmd == nil {
 		return nil, fmt.Errorf("remoting command is nil")
 	}
@@ -68,7 +69,7 @@ func (tc *TransportCodec) EncodeRemotingCommand(cmd *protocol.RemotingCommand) (
 }
 
 // DecodeRemotingCommand 解码RemotingCommand
-func (tc *TransportCodec) DecodeRemotingCommand(reader io.Reader) (*protocol.RemotingCommand, error) {
+func (tc *TransportCodec) DecodeRemotingCommand(reader io.Reader) (*remoting.RemotingCommand, error) {
 	// 读取总长度
 	var totalLen int32
 	if err := binary.Read(reader, binary.BigEndian, &totalLen); err != nil {
@@ -114,10 +115,10 @@ func (tc *TransportCodec) DecodeRemotingCommand(reader io.Reader) (*protocol.Rem
 }
 
 // encodeHeader 编码头部信息
-func (tc *TransportCodec) encodeHeader(cmd *protocol.RemotingCommand) ([]byte, error) {
+func (tc *TransportCodec) encodeHeader(cmd *remoting.RemotingCommand) ([]byte, error) {
 	// 创建头部结构
 	header := map[string]interface{}{
-		"code":     int32(cmd.Code),
+		"code":     cmd.Code,
 		"language": cmd.Language,
 		"version":  cmd.Version,
 		"opaque":   cmd.Opaque,
@@ -144,7 +145,7 @@ func (tc *TransportCodec) encodeHeader(cmd *protocol.RemotingCommand) ([]byte, e
 }
 
 // decodeHeader 解码头部信息
-func (tc *TransportCodec) decodeHeader(headerData []byte) (*protocol.RemotingCommand, error) {
+func (tc *TransportCodec) decodeHeader(headerData []byte) (*remoting.RemotingCommand, error) {
 	// 解析JSON
 	var header map[string]interface{}
 	if err := json.Unmarshal(headerData, &header); err != nil {
@@ -152,13 +153,13 @@ func (tc *TransportCodec) decodeHeader(headerData []byte) (*protocol.RemotingCom
 	}
 
 	// 创建RemotingCommand
-	cmd := &protocol.RemotingCommand{
+	cmd := &remoting.RemotingCommand{
 		ExtFields: make(map[string]string),
 	}
 
 	// 解析基本字段
 	if code, ok := header["code"].(float64); ok {
-		cmd.Code = protocol.RequestCode(int32(code))
+		cmd.Code = remoting.RequestCode(int32(code))
 	}
 
 	if language, ok := header["language"].(string); ok {
@@ -194,27 +195,27 @@ func (tc *TransportCodec) decodeHeader(headerData []byte) (*protocol.RemotingCom
 }
 
 // EncodeMessage 编码消息（委托给MessageCodec）
-func (tc *TransportCodec) EncodeMessage(msg *Message) ([]byte, error) {
+func (tc *TransportCodec) EncodeMessage(msg *codec.Message) ([]byte, error) {
 	return tc.messageCodec.EncodeMessage(msg)
 }
 
 // DecodeMessage 解码消息（委托给MessageCodec）
-func (tc *TransportCodec) DecodeMessage(data []byte) (*Message, error) {
+func (tc *TransportCodec) DecodeMessage(data []byte) (*codec.Message, error) {
 	return tc.messageCodec.DecodeMessage(data)
 }
 
 // EncodeMessages 编码批量消息（委托给MessageCodec）
-func (tc *TransportCodec) EncodeMessages(messages []*Message) ([]byte, error) {
+func (tc *TransportCodec) EncodeMessages(messages []*codec.Message) ([]byte, error) {
 	return tc.messageCodec.EncodeMessages(messages)
 }
 
 // DecodeMessages 解码批量消息（委托给MessageCodec）
-func (tc *TransportCodec) DecodeMessages(data []byte) ([]*Message, error) {
+func (tc *TransportCodec) DecodeMessages(data []byte) ([]*codec.Message, error) {
 	return tc.messageCodec.DecodeMessages(data)
 }
 
 // ValidateRemotingCommand 验证RemotingCommand
-func (tc *TransportCodec) ValidateRemotingCommand(cmd *protocol.RemotingCommand) error {
+func (tc *TransportCodec) ValidateRemotingCommand(cmd *remoting.RemotingCommand) error {
 	if cmd == nil {
 		return fmt.Errorf("remoting command is nil")
 	}
@@ -244,7 +245,7 @@ func (tc *TransportCodec) ValidateRemotingCommand(cmd *protocol.RemotingCommand)
 }
 
 // CalculateRemotingCommandSize 计算RemotingCommand大小
-func (tc *TransportCodec) CalculateRemotingCommandSize(cmd *protocol.RemotingCommand) (int, error) {
+func (tc *TransportCodec) CalculateRemotingCommandSize(cmd *remoting.RemotingCommand) (int, error) {
 	if cmd == nil {
 		return 0, fmt.Errorf("remoting command is nil")
 	}
@@ -259,8 +260,8 @@ func (tc *TransportCodec) CalculateRemotingCommandSize(cmd *protocol.RemotingCom
 }
 
 // CreateRequestCommand 创建请求命令
-func (tc *TransportCodec) CreateRequestCommand(code protocol.RequestCode, extFields map[string]string, body []byte) *protocol.RemotingCommand {
-	cmd := protocol.CreateRemotingCommand(code)
+func (tc *TransportCodec) CreateRequestCommand(code remoting.RequestCode, extFields map[string]string, body []byte) *remoting.RemotingCommand {
+	cmd := remoting.CreateRemotingCommand(code)
 	if extFields != nil {
 		cmd.ExtFields = extFields
 	}
@@ -269,8 +270,8 @@ func (tc *TransportCodec) CreateRequestCommand(code protocol.RequestCode, extFie
 }
 
 // CreateResponseCommand 创建响应命令
-func (tc *TransportCodec) CreateResponseCommand(code protocol.ResponseCode, remark string, extFields map[string]string, body []byte) *protocol.RemotingCommand {
-	cmd := protocol.CreateResponseCommand(code, remark)
+func (tc *TransportCodec) CreateResponseCommand(code remoting.ResponseCode, remark string, extFields map[string]string, body []byte) *remoting.RemotingCommand {
+	cmd := remoting.CreateResponseCommand(code, remark)
 	if extFields != nil {
 		cmd.ExtFields = extFields
 	}
@@ -279,50 +280,50 @@ func (tc *TransportCodec) CreateResponseCommand(code protocol.ResponseCode, rema
 }
 
 // IsRequestCommand 判断是否为请求命令
-func (tc *TransportCodec) IsRequestCommand(cmd *protocol.RemotingCommand) bool {
+func (tc *TransportCodec) IsRequestCommand(cmd *remoting.RemotingCommand) bool {
 	return cmd != nil && (cmd.Flag&0x01) == 0
 }
 
 // IsResponseCommand 判断是否为响应命令
-func (tc *TransportCodec) IsResponseCommand(cmd *protocol.RemotingCommand) bool {
+func (tc *TransportCodec) IsResponseCommand(cmd *remoting.RemotingCommand) bool {
 	return cmd != nil && (cmd.Flag&0x01) == 1
 }
 
 // IsOnewayCommand 判断是否为单向命令
-func (tc *TransportCodec) IsOnewayCommand(cmd *protocol.RemotingCommand) bool {
+func (tc *TransportCodec) IsOnewayCommand(cmd *remoting.RemotingCommand) bool {
 	return cmd != nil && (cmd.Flag&0x02) == 2
 }
 
 // SetRequestFlag 设置请求标志
-func (tc *TransportCodec) SetRequestFlag(cmd *protocol.RemotingCommand) {
+func (tc *TransportCodec) SetRequestFlag(cmd *remoting.RemotingCommand) {
 	if cmd != nil {
 		cmd.Flag = cmd.Flag &^ 0x01 // 清除响应标志
 	}
 }
 
 // SetResponseFlag 设置响应标志
-func (tc *TransportCodec) SetResponseFlag(cmd *protocol.RemotingCommand) {
+func (tc *TransportCodec) SetResponseFlag(cmd *remoting.RemotingCommand) {
 	if cmd != nil {
 		cmd.Flag = cmd.Flag | 0x01 // 设置响应标志
 	}
 }
 
 // SetOnewayFlag 设置单向标志
-func (tc *TransportCodec) SetOnewayFlag(cmd *protocol.RemotingCommand) {
+func (tc *TransportCodec) SetOnewayFlag(cmd *remoting.RemotingCommand) {
 	if cmd != nil {
 		cmd.Flag = cmd.Flag | 0x02 // 设置单向标志
 	}
 }
 
 // ClearOnewayFlag 清除单向标志
-func (tc *TransportCodec) ClearOnewayFlag(cmd *protocol.RemotingCommand) {
+func (tc *TransportCodec) ClearOnewayFlag(cmd *remoting.RemotingCommand) {
 	if cmd != nil {
 		cmd.Flag = cmd.Flag &^ 0x02 // 清除单向标志
 	}
 }
 
 // GetCommandType 获取命令类型
-func (tc *TransportCodec) GetCommandType(cmd *protocol.RemotingCommand) string {
+func (tc *TransportCodec) GetCommandType(cmd *remoting.RemotingCommand) string {
 	if cmd == nil {
 		return "unknown"
 	}
@@ -337,12 +338,12 @@ func (tc *TransportCodec) GetCommandType(cmd *protocol.RemotingCommand) string {
 }
 
 // CloneRemotingCommand 克隆RemotingCommand
-func (tc *TransportCodec) CloneRemotingCommand(cmd *protocol.RemotingCommand) *protocol.RemotingCommand {
+func (tc *TransportCodec) CloneRemotingCommand(cmd *remoting.RemotingCommand) *remoting.RemotingCommand {
 	if cmd == nil {
 		return nil
 	}
 
-	clone := &protocol.RemotingCommand{
+	clone := &remoting.RemotingCommand{
 		Code:     cmd.Code,
 		Language: cmd.Language,
 		Version:  cmd.Version,

@@ -1,15 +1,17 @@
-package remoting
+package server
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"encoding/binary"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"go-rocketmq/pkg/protocol"
 )
 
 // ServerError 服务端错误
@@ -57,7 +59,7 @@ func NewServerError(code int, message string, err error) *ServerError {
 type RemotingServer struct {
 	listenPort  int
 	listener    net.Listener
-	processors  sync.Map // map[protocol.RequestCode]RequestProcessor
+	processors  sync.Map // map[RequestCode]RequestProcessor
 	connections sync.Map // map[string]*ServerConnection
 	closed      int32
 	ctx         context.Context
@@ -100,6 +102,61 @@ type ServerMetrics struct {
 	mutex             sync.RWMutex
 }
 
+// RequestCode 请求码
+type RequestCode int32
+
+// ResponseCode 响应码
+type ResponseCode int32
+
+const (
+	Success                   ResponseCode = 0
+	SystemError               ResponseCode = 1
+	SystemBusy                ResponseCode = 2
+	RequestCodeNotSupported   ResponseCode = 3
+	TransactionFailed         ResponseCode = 4
+	FlushDiskTimeout          ResponseCode = 10
+	SlaveNotAvailable         ResponseCode = 11
+	FlushSlaveTimeout         ResponseCode = 12
+	MessageIllegal            ResponseCode = 13
+	ServiceNotAvailable       ResponseCode = 14
+	VersionNotSupported       ResponseCode = 15
+	NoPermission              ResponseCode = 16
+	TopicNotExist             ResponseCode = 17
+	TopicExistAlready         ResponseCode = 18
+	PullNotFound              ResponseCode = 19
+	PullRetryImmediately      ResponseCode = 20
+	PullOffsetMoved           ResponseCode = 21
+	QueryNotFound             ResponseCode = 22
+	SubscriptionParseFailed   ResponseCode = 23
+	SubscriptionNotExist      ResponseCode = 24
+	SubscriptionNotLatest     ResponseCode = 25
+	SubscriptionGroupNotExist ResponseCode = 26
+)
+
+// RemotingCommand 远程调用命令
+type RemotingCommand struct {
+	Code      int32             `json:"code"`
+	Language  string            `json:"language"`
+	Version   int32             `json:"version"`
+	Opaque    int32             `json:"opaque"`
+	Flag      int32             `json:"flag"`
+	Remark    string            `json:"remark"`
+	ExtFields map[string]string `json:"extFields"`
+	Body      []byte            `json:"body"`
+}
+
+// CreateResponseCommand 创建响应命令
+func CreateResponseCommand(code ResponseCode, remark string) *RemotingCommand {
+	return &RemotingCommand{
+		Code:      int32(code),
+		Language:  "GO",
+		Version:   1,
+		Flag:      1, // 响应标志
+		Remark:    remark,
+		ExtFields: make(map[string]string),
+	}
+}
+
 // ServerConnection 服务端连接
 type ServerConnection struct {
 	conn       net.Conn
@@ -118,14 +175,14 @@ func (sc *ServerConnection) GetRemoteAddr() string {
 
 // RequestProcessor 请求处理器接口
 type RequestProcessor interface {
-	ProcessRequest(ctx context.Context, request *protocol.RemotingCommand, conn *ServerConnection) (*protocol.RemotingCommand, error)
+	ProcessRequest(ctx context.Context, request *RemotingCommand, conn *ServerConnection) (*RemotingCommand, error)
 }
 
 // RequestProcessorFunc 请求处理器函数类型
-type RequestProcessorFunc func(ctx context.Context, request *protocol.RemotingCommand, conn *ServerConnection) (*protocol.RemotingCommand, error)
+type RequestProcessorFunc func(ctx context.Context, request *RemotingCommand, conn *ServerConnection) (*RemotingCommand, error)
 
 // ProcessRequest 实现RequestProcessor接口
-func (f RequestProcessorFunc) ProcessRequest(ctx context.Context, request *protocol.RemotingCommand, conn *ServerConnection) (*protocol.RemotingCommand, error) {
+func (f RequestProcessorFunc) ProcessRequest(ctx context.Context, request *RemotingCommand, conn *ServerConnection) (*RemotingCommand, error) {
 	return f(ctx, request, conn)
 }
 
@@ -146,12 +203,12 @@ func NewRemotingServer(listenPort int) *RemotingServer {
 }
 
 // RegisterProcessor 注册请求处理器
-func (rs *RemotingServer) RegisterProcessor(code protocol.RequestCode, processor RequestProcessor) {
+func (rs *RemotingServer) RegisterProcessor(code RequestCode, processor RequestProcessor) {
 	rs.processors.Store(code, processor)
 }
 
 // RegisterProcessorFunc 注册请求处理器函数
-func (rs *RemotingServer) RegisterProcessorFunc(code protocol.RequestCode, processorFunc RequestProcessorFunc) {
+func (rs *RemotingServer) RegisterProcessorFunc(code RequestCode, processorFunc RequestProcessorFunc) {
 	rs.processors.Store(code, processorFunc)
 }
 
@@ -266,7 +323,7 @@ func (rs *RemotingServer) handleConnection(conn net.Conn) {
 }
 
 // processRequest 处理请求
-func (rs *RemotingServer) processRequest(request *protocol.RemotingCommand, conn *ServerConnection) {
+func (rs *RemotingServer) processRequest(request *RemotingCommand, conn *ServerConnection) {
 	defer rs.wg.Done()
 
 	startTime := time.Now()
@@ -291,7 +348,7 @@ func (rs *RemotingServer) processRequest(request *protocol.RemotingCommand, conn
 
 		if !isOneway {
 			// 发送不支持的请求码响应
-			response := protocol.CreateResponseCommand(protocol.RequestCodeNotSupported, "request code not supported")
+			response := CreateResponseCommand(RequestCodeNotSupported, "request code not supported")
 			response.Opaque = request.Opaque
 			rs.sendResponse(conn, response)
 		}
@@ -311,7 +368,7 @@ func (rs *RemotingServer) processRequest(request *protocol.RemotingCommand, conn
 
 		if !isOneway {
 			// 发送错误响应
-			errorResponse := protocol.CreateResponseCommand(protocol.SystemError, err.Error())
+			errorResponse := CreateResponseCommand(SystemError, err.Error())
 			errorResponse.Opaque = request.Opaque
 			rs.sendResponse(conn, errorResponse)
 		}
@@ -328,7 +385,7 @@ func (rs *RemotingServer) processRequest(request *protocol.RemotingCommand, conn
 		}
 	} else if !isOneway {
 		// 发送空响应
-		emptyResponse := protocol.CreateResponseCommand(protocol.Success, "")
+		emptyResponse := CreateResponseCommand(Success, "")
 		emptyResponse.Opaque = request.Opaque
 		rs.sendResponse(conn, emptyResponse)
 		rs.metrics.incrementSuccessRequests()
@@ -336,7 +393,7 @@ func (rs *RemotingServer) processRequest(request *protocol.RemotingCommand, conn
 }
 
 // sendResponse 发送响应
-func (rs *RemotingServer) sendResponse(conn *ServerConnection, response *protocol.RemotingCommand) {
+func (rs *RemotingServer) sendResponse(conn *ServerConnection, response *RemotingCommand) {
 	conn.mutex.Lock()
 	defer conn.mutex.Unlock()
 
@@ -357,18 +414,92 @@ func (rs *RemotingServer) sendResponse(conn *ServerConnection, response *protoco
 	conn.lastUsed = time.Now()
 }
 
-// encodeRemotingCommand 编码RemotingCommand（与客户端相同的实现）
-func (rs *RemotingServer) encodeRemotingCommand(cmd *protocol.RemotingCommand) ([]byte, error) {
-	// 使用与客户端相同的编码逻辑
-	client := &RemotingClient{}
-	return client.encodeRemotingCommand(cmd)
+// encodeRemotingCommand 编码RemotingCommand
+func (rs *RemotingServer) encodeRemotingCommand(cmd *RemotingCommand) ([]byte, error) {
+	// 序列化header
+	headerData, err := json.Marshal(cmd)
+	if err != nil {
+		return nil, NewServerError(ErrCodeServerEncodeFailed, "failed to marshal command header", err)
+	}
+
+	headerLength := len(headerData)
+	bodyLength := len(cmd.Body)
+	totalLength := 4 + headerLength + bodyLength
+
+	// 构建数据包
+	buf := bytes.NewBuffer(make([]byte, 0, totalLength+4))
+
+	// 写入总长度
+	binary.Write(buf, binary.BigEndian, int32(totalLength))
+
+	// 写入header长度和序列化类型
+	headerLengthAndSerializeType := (headerLength << 8) | 0 // JSON序列化
+	binary.Write(buf, binary.BigEndian, int32(headerLengthAndSerializeType))
+
+	// 写入header数据
+	buf.Write(headerData)
+
+	// 写入body数据
+	if bodyLength > 0 {
+		buf.Write(cmd.Body)
+	}
+
+	return buf.Bytes(), nil
 }
 
-// decodeRemotingCommand 解码RemotingCommand（与客户端相同的实现）
-func (rs *RemotingServer) decodeRemotingCommand(reader *bufio.Reader) (*protocol.RemotingCommand, error) {
-	// 使用与客户端相同的解码逻辑
-	client := &RemotingClient{}
-	return client.decodeRemotingCommand(reader)
+// decodeRemotingCommand 解码RemotingCommand
+func (rs *RemotingServer) decodeRemotingCommand(reader *bufio.Reader) (*RemotingCommand, error) {
+	// 读取总长度
+	var totalLength int32
+	if err := binary.Read(reader, binary.BigEndian, &totalLength); err != nil {
+		return nil, NewServerError(ErrCodeServerDecodeFailed, "failed to read total length", err)
+	}
+
+	if totalLength <= 0 || totalLength > 16*1024*1024 { // 16MB限制
+		return nil, NewServerError(ErrCodeServerInvalidRequest, fmt.Sprintf("invalid total length: %d", totalLength), nil)
+	}
+
+	// 读取header长度和序列化类型
+	var headerLengthAndSerializeType int32
+	if err := binary.Read(reader, binary.BigEndian, &headerLengthAndSerializeType); err != nil {
+		return nil, NewServerError(ErrCodeServerDecodeFailed, "failed to read header length", err)
+	}
+
+	headerLength := (headerLengthAndSerializeType >> 8) & 0xFFFFFF
+	serializeType := headerLengthAndSerializeType & 0xFF
+
+	if headerLength <= 0 || headerLength > totalLength-4 {
+		return nil, NewServerError(ErrCodeServerInvalidRequest, fmt.Sprintf("invalid header length: %d", headerLength), nil)
+	}
+
+	// 读取header数据
+	headerData := make([]byte, headerLength)
+	if _, err := io.ReadFull(reader, headerData); err != nil {
+		return nil, NewServerError(ErrCodeServerDecodeFailed, "failed to read header data", err)
+	}
+
+	// 读取body数据
+	bodyLength := totalLength - 4 - headerLength
+	var bodyData []byte
+	if bodyLength > 0 {
+		bodyData = make([]byte, bodyLength)
+		if _, err := io.ReadFull(reader, bodyData); err != nil {
+			return nil, NewServerError(ErrCodeServerDecodeFailed, "failed to read body data", err)
+		}
+	}
+
+	// 反序列化header
+	var cmd RemotingCommand
+	if serializeType == 0 { // JSON
+		if err := json.Unmarshal(headerData, &cmd); err != nil {
+			return nil, NewServerError(ErrCodeServerDecodeFailed, "failed to unmarshal command header", err)
+		}
+	} else {
+		return nil, NewServerError(ErrCodeServerDecodeFailed, fmt.Sprintf("unsupported serialize type: %d", serializeType), nil)
+	}
+
+	cmd.Body = bodyData
+	return &cmd, nil
 }
 
 // cleanupRoutine 清理过期连接
@@ -460,7 +591,7 @@ func (rs *RemotingServer) getConnectionCount() int {
 }
 
 // SendToClient 向指定客户端发送消息
-func (rs *RemotingServer) SendToClient(remoteAddr string, command *protocol.RemotingCommand) error {
+func (rs *RemotingServer) SendToClient(remoteAddr string, command *RemotingCommand) error {
 	connValue, exists := rs.connections.Load(remoteAddr)
 	if !exists {
 		return NewServerError(ErrCodeServerNetworkError, fmt.Sprintf("connection to %s not found", remoteAddr), nil)
@@ -472,7 +603,7 @@ func (rs *RemotingServer) SendToClient(remoteAddr string, command *protocol.Remo
 }
 
 // BroadcastToAllClients 向所有客户端广播消息
-func (rs *RemotingServer) BroadcastToAllClients(command *protocol.RemotingCommand) {
+func (rs *RemotingServer) BroadcastToAllClients(command *RemotingCommand) {
 	rs.connections.Range(func(key, value interface{}) bool {
 		conn := value.(*ServerConnection)
 		rs.sendResponse(conn, command)
@@ -481,7 +612,7 @@ func (rs *RemotingServer) BroadcastToAllClients(command *protocol.RemotingComman
 }
 
 // logRequest 记录请求日志
-func (rs *RemotingServer) logRequest(request *protocol.RemotingCommand, remoteAddr string) {
+func (rs *RemotingServer) logRequest(request *RemotingCommand, remoteAddr string) {
 	// 简化实现，实际应该使用日志库
 	fmt.Printf("Processing request code %d from %s\n", request.Code, remoteAddr)
 }

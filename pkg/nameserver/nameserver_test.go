@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"go-rocketmq/pkg/protocol"
+	"go-rocketmq/pkg/remoting"
 )
 
 // TestDefaultConfig 测试默认配置
@@ -57,7 +57,7 @@ func TestConfig(t *testing.T) {
 func TestBrokerLiveInfo(t *testing.T) {
 	info := &BrokerLiveInfo{
 		LastUpdateTimestamp: time.Now(),
-		DataVersion:         protocol.NewDataVersion(),
+		DataVersion:         remoting.NewDataVersion(),
 		HaServerAddr:        "127.0.0.1:10912",
 	}
 
@@ -166,18 +166,18 @@ func TestRegisterBroker(t *testing.T) {
 	ns := NewNameServer(config)
 
 	// 创建测试用的TopicConfig
-	topicConfig := &protocol.TopicConfig{
+	topicConfig := &remoting.TopicConfig{
 		TopicName:      "TestTopic",
 		ReadQueueNums:  4,
 		WriteQueueNums: 4,
 		Perm:           6,
 	}
 
-	topicConfigWrapper := &protocol.TopicConfigSerializeWrapper{
-		TopicConfigTable: map[string]*protocol.TopicConfig{
+	topicConfigWrapper := &remoting.TopicConfigSerializeWrapper{
+		TopicConfigTable: map[string]*remoting.TopicConfig{
 			"TestTopic": topicConfig,
 		},
-		DataVersion: protocol.NewDataVersion(),
+		DataVersion: remoting.NewDataVersion(),
 	}
 
 	// 注册Broker
@@ -221,18 +221,18 @@ func TestGetRouteInfoByTopic(t *testing.T) {
 	ns := NewNameServer(config)
 
 	// 先注册一个Broker
-	topicConfig := &protocol.TopicConfig{
+	topicConfig := &remoting.TopicConfig{
 		TopicName:      "TestTopic",
 		ReadQueueNums:  4,
 		WriteQueueNums: 4,
 		Perm:           6,
 	}
 
-	topicConfigWrapper := &protocol.TopicConfigSerializeWrapper{
-		TopicConfigTable: map[string]*protocol.TopicConfig{
+	topicConfigWrapper := &remoting.TopicConfigSerializeWrapper{
+		TopicConfigTable: map[string]*remoting.TopicConfig{
 			"TestTopic": topicConfig,
 		},
-		DataVersion: protocol.NewDataVersion(),
+		DataVersion: remoting.NewDataVersion(),
 	}
 
 	ns.RegisterBroker(
@@ -296,18 +296,18 @@ func TestGetAllClusterInfo(t *testing.T) {
 	ns := NewNameServer(config)
 
 	// 注册多个Broker
-	topicConfig := &protocol.TopicConfig{
+	topicConfig := &remoting.TopicConfig{
 		TopicName:      "TestTopic",
 		ReadQueueNums:  4,
 		WriteQueueNums: 4,
 		Perm:           6,
 	}
 
-	topicConfigWrapper := &protocol.TopicConfigSerializeWrapper{
-		TopicConfigTable: map[string]*protocol.TopicConfig{
+	topicConfigWrapper := &remoting.TopicConfigSerializeWrapper{
+		TopicConfigTable: map[string]*remoting.TopicConfig{
 			"TestTopic": topicConfig,
 		},
-		DataVersion: protocol.NewDataVersion(),
+		DataVersion: remoting.NewDataVersion(),
 	}
 
 	// 注册第一个Broker
@@ -362,7 +362,7 @@ func TestCreateAndUpdateQueueData(t *testing.T) {
 	config := DefaultConfig()
 	ns := NewNameServer(config)
 
-	topicConfig := &protocol.TopicConfig{
+	topicConfig := &remoting.TopicConfig{
 		TopicName:      "TestTopic",
 		ReadQueueNums:  4,
 		WriteQueueNums: 4,
@@ -408,7 +408,7 @@ func TestScanNotActiveBrokerInternal(t *testing.T) {
 	ns.mutex.Lock()
 	ns.brokerLiveTable["127.0.0.1:10911"] = &BrokerLiveInfo{
 		LastUpdateTimestamp: expiredTime,
-		DataVersion:         protocol.NewDataVersion(),
+		DataVersion:         remoting.NewDataVersion(),
 		HaServerAddr:        "127.0.0.1:10912",
 	}
 	ns.mutex.Unlock()
@@ -417,7 +417,7 @@ func TestScanNotActiveBrokerInternal(t *testing.T) {
 	ns.routeTable.mutex.Lock()
 	ns.routeTable.brokerLiveTable["127.0.0.1:10911"] = &BrokerLiveInfo{
 		LastUpdateTimestamp: expiredTime,
-		DataVersion:         protocol.NewDataVersion(),
+		DataVersion:         remoting.NewDataVersion(),
 		HaServerAddr:        "127.0.0.1:10912",
 	}
 	ns.routeTable.mutex.Unlock()
@@ -440,18 +440,18 @@ func TestConcurrentBrokerRegistration(t *testing.T) {
 	config := DefaultConfig()
 	ns := NewNameServer(config)
 
-	topicConfig := &protocol.TopicConfig{
+	topicConfig := &remoting.TopicConfig{
 		TopicName:      "TestTopic",
 		ReadQueueNums:  4,
 		WriteQueueNums: 4,
 		Perm:           6,
 	}
 
-	topicConfigWrapper := &protocol.TopicConfigSerializeWrapper{
-		TopicConfigTable: map[string]*protocol.TopicConfig{
+	topicConfigWrapper := &remoting.TopicConfigSerializeWrapper{
+		TopicConfigTable: map[string]*remoting.TopicConfig{
 			"TestTopic": topicConfig,
 		},
-		DataVersion: protocol.NewDataVersion(),
+		DataVersion: remoting.NewDataVersion(),
 	}
 
 	// 并发注册多个Broker
@@ -502,18 +502,18 @@ func BenchmarkRegisterBroker(b *testing.B) {
 	config := DefaultConfig()
 	ns := NewNameServer(config)
 
-	topicConfig := &protocol.TopicConfig{
+	topicConfig := &remoting.TopicConfig{
 		TopicName:      "TestTopic",
 		ReadQueueNums:  4,
 		WriteQueueNums: 4,
 		Perm:           6,
 	}
 
-	topicConfigWrapper := &protocol.TopicConfigSerializeWrapper{
-		TopicConfigTable: map[string]*protocol.TopicConfig{
+	topicConfigWrapper := &remoting.TopicConfigSerializeWrapper{
+		TopicConfigTable: map[string]*remoting.TopicConfig{
 			"TestTopic": topicConfig,
 		},
-		DataVersion: protocol.NewDataVersion(),
+		DataVersion: remoting.NewDataVersion(),
 	}
 
 	b.ResetTimer()
@@ -541,18 +541,18 @@ func BenchmarkGetRouteInfoByTopic(b *testing.B) {
 	ns := NewNameServer(config)
 
 	// 预先注册一些Broker
-	topicConfig := &protocol.TopicConfig{
+	topicConfig := &remoting.TopicConfig{
 		TopicName:      "TestTopic",
 		ReadQueueNums:  4,
 		WriteQueueNums: 4,
 		Perm:           6,
 	}
 
-	topicConfigWrapper := &protocol.TopicConfigSerializeWrapper{
-		TopicConfigTable: map[string]*protocol.TopicConfig{
+	topicConfigWrapper := &remoting.TopicConfigSerializeWrapper{
+		TopicConfigTable: map[string]*remoting.TopicConfig{
 			"TestTopic": topicConfig,
 		},
-		DataVersion: protocol.NewDataVersion(),
+		DataVersion: remoting.NewDataVersion(),
 	}
 
 	for i := 0; i < 10; i++ {
@@ -584,18 +584,18 @@ func BenchmarkGetAllClusterInfo(b *testing.B) {
 	ns := NewNameServer(config)
 
 	// 预先注册一些Broker
-	topicConfig := &protocol.TopicConfig{
+	topicConfig := &remoting.TopicConfig{
 		TopicName:      "TestTopic",
 		ReadQueueNums:  4,
 		WriteQueueNums: 4,
 		Perm:           6,
 	}
 
-	topicConfigWrapper := &protocol.TopicConfigSerializeWrapper{
-		TopicConfigTable: map[string]*protocol.TopicConfig{
+	topicConfigWrapper := &remoting.TopicConfigSerializeWrapper{
+		TopicConfigTable: map[string]*remoting.TopicConfig{
 			"TestTopic": topicConfig,
 		},
-		DataVersion: protocol.NewDataVersion(),
+		DataVersion: remoting.NewDataVersion(),
 	}
 
 	for i := 0; i < 10; i++ {

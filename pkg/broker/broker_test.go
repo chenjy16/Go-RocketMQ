@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"go-rocketmq/pkg/common"
-	"go-rocketmq/pkg/protocol"
+	"go-rocketmq/pkg/remoting"
 	"go-rocketmq/pkg/store"
 )
 
@@ -36,24 +36,24 @@ func TestDefaultBrokerConfig(t *testing.T) {
 func TestConfig(t *testing.T) {
 	config := &Config{
 		BrokerName:                "test-broker",
-		BrokerId:                   0,
-		ClusterName:                "DefaultCluster",
-		ListenPort:                 10911,
-		NameServerAddr:             "127.0.0.1:9876",
-		StorePathRootDir:           "/tmp/store",
-		SendMessageThreadPoolNums:  16,
-		PullMessageThreadPoolNums:  16,
-		FlushDiskType:              0,
-		BrokerRole:                 0,
-		HaListenPort:               10912,
-		HaMasterAddress:            "",
-		ReplicationMode:            0,
-		EnableCluster:              true,
-		ClusterManagerPort:         10913,
-		EnableFailover:             true,
-		AutoFailover:               true,
-		FailoverDelay:              30,
-		BackupBrokers:              []string{"127.0.0.1:10921"},
+		BrokerId:                  0,
+		ClusterName:               "DefaultCluster",
+		ListenPort:                10911,
+		NameServerAddr:            "127.0.0.1:9876",
+		StorePathRootDir:          "/tmp/store",
+		SendMessageThreadPoolNums: 16,
+		PullMessageThreadPoolNums: 16,
+		FlushDiskType:             0,
+		BrokerRole:                0,
+		HaListenPort:              10912,
+		HaMasterAddress:           "",
+		ReplicationMode:           0,
+		EnableCluster:             true,
+		ClusterManagerPort:        10913,
+		EnableFailover:            true,
+		AutoFailover:              true,
+		FailoverDelay:             30,
+		BackupBrokers:             []string{"127.0.0.1:10921"},
 	}
 
 	// 测试JSON序列化
@@ -87,12 +87,12 @@ func TestConsumerGroupInfo(t *testing.T) {
 		ConsumeType:      0,
 		MessageModel:     1,
 		ConsumeFromWhere: 0,
-		Subscriptions:    make(map[string]*protocol.SubscriptionData),
+		Subscriptions:    make(map[string]*remoting.SubscriptionData),
 		Channels:         make(map[string]net.Conn),
 	}
 
 	// 添加订阅数据
-	subData := &protocol.SubscriptionData{
+	subData := &remoting.SubscriptionData{
 		Topic:          "TestTopic",
 		SubString:      "*",
 		TagsSet:        []string{"TagA"},
@@ -169,19 +169,19 @@ func TestNewBroker(t *testing.T) {
 func TestBrokerStartStop(t *testing.T) {
 	config := &Config{
 		BrokerName:                "test-broker",
-		BrokerId:                   0,
-		ClusterName:                "DefaultCluster",
-		ListenPort:                 0, // 使用随机端口
-		NameServerAddr:             "127.0.0.1:9876",
-		StorePathRootDir:           "/tmp/test-store",
-		SendMessageThreadPoolNums:  4,
-		PullMessageThreadPoolNums:  4,
-		FlushDiskType:              0,
-		BrokerRole:                 0,
-		HaListenPort:               0,
-		ReplicationMode:            0,
-		EnableCluster:              false, // 禁用集群功能以简化测试
-		EnableFailover:             false, // 禁用故障转移以简化测试
+		BrokerId:                  0,
+		ClusterName:               "DefaultCluster",
+		ListenPort:                0, // 使用随机端口
+		NameServerAddr:            "127.0.0.1:9876",
+		StorePathRootDir:          "/tmp/test-store",
+		SendMessageThreadPoolNums: 4,
+		PullMessageThreadPoolNums: 4,
+		FlushDiskType:             0,
+		BrokerRole:                0,
+		HaListenPort:              0,
+		ReplicationMode:           0,
+		EnableCluster:             false, // 禁用集群功能以简化测试
+		EnableFailover:            false, // 禁用故障转移以简化测试
 	}
 
 	broker := NewBroker(config)
@@ -428,24 +428,24 @@ func getFreePort() int {
 // NewTestBrokerConfig 创建用于测试的Broker配置，使用动态端口分配
 func NewTestBrokerConfig() *Config {
 	return &Config{
-		BrokerName:       "TestBroker",
-		BrokerId:         0,
-		ClusterName:      "TestCluster",
-		ListenPort:       getFreePort(),
-		NameServerAddr:   "127.0.0.1:9876",
-		StorePathRootDir: "/tmp/rocketmq-test-store",
+		BrokerName:                "TestBroker",
+		BrokerId:                  0,
+		ClusterName:               "TestCluster",
+		ListenPort:                getFreePort(),
+		NameServerAddr:            "127.0.0.1:9876",
+		StorePathRootDir:          "/tmp/rocketmq-test-store",
 		SendMessageThreadPoolNums: 16,
 		PullMessageThreadPoolNums: 16,
-		FlushDiskType:    0, // ASYNC_FLUSH
-		BrokerRole:       0, // ASYNC_MASTER
-		HaListenPort:     getFreePort(),
-		ReplicationMode:  0, // ASYNC_REPLICATION
-		EnableCluster:    true,
-		ClusterManagerPort: getFreePort(),
-		EnableFailover:   true,
-		AutoFailover:     false,
-		FailoverDelay:    30,
-		BackupBrokers:    []string{},
+		FlushDiskType:             0, // ASYNC_FLUSH
+		BrokerRole:                0, // ASYNC_MASTER
+		HaListenPort:              getFreePort(),
+		ReplicationMode:           0, // ASYNC_REPLICATION
+		EnableCluster:             true,
+		ClusterManagerPort:        getFreePort(),
+		EnableFailover:            true,
+		AutoFailover:              false,
+		FailoverDelay:             30,
+		BackupBrokers:             []string{},
 	}
 }
 
