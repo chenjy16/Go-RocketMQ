@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"go-rocketmq/pkg/remoting"
+	remoting "github.com/chenjy16/go-rocketmq-remoting"
 )
 
 // TestDefaultConfig 测试默认配置

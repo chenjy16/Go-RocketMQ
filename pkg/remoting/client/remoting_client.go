@@ -13,7 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"go-rocketmq/pkg/remoting/connection"
+	"github.com/chenjy16/go-rocketmq-remoting/connection"
 )
 
 // RemotingCommand 远程调用命令

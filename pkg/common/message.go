@@ -46,13 +46,6 @@ type SendResult struct {
 // SendStatus 发送状态枚举
 type SendStatus int32
 
-const (
-	SendOK                SendStatus = iota // 发送成功
-	SendFlushDiskTimeout                    // 刷盘超时
-	SendFlushSlaveTimeout                   // 同步到Slave超时
-	SendSlaveNotAvailable                   // Slave不可用
-)
-
 // MessageQueue 消息队列
 type MessageQueue struct {
 	Topic      string `json:"topic"`      // 主题
@@ -62,11 +55,6 @@ type MessageQueue struct {
 
 // ConsumeResult 消费结果
 type ConsumeResult int32
-
-const (
-	ConsumeSuccess ConsumeResult = iota // 消费成功
-	ReconsumeLater                      // 稍后重试
-)
 
 // MessageListener 消息监听器接口
 type MessageListener interface {
@@ -89,19 +77,8 @@ type ConsumeOrderlyContext struct {
 // ConsumeFromWhere 消费起始位置
 type ConsumeFromWhere int32
 
-const (
-	ConsumeFromLastOffset  ConsumeFromWhere = iota // 从最后偏移量开始
-	ConsumeFromFirstOffset                         // 从第一个偏移量开始
-	ConsumeFromTimestamp                           // 从指定时间戳开始
-)
-
 // MessageModel 消息模式
 type MessageModel int32
-
-const (
-	Clustering   MessageModel = iota // 集群模式
-	Broadcasting                     // 广播模式
-)
 
 // NewMessage 创建新消息
 func NewMessage(topic string, body []byte) *Message {
@@ -163,3 +140,88 @@ func (m *Message) SetStartDeliverTime(timestamp int64) *Message {
 func (mq *MessageQueue) String() string {
 	return fmt.Sprintf("MessageQueue{topic=%s, brokerName=%s, queueId=%d}", mq.Topic, mq.BrokerName, mq.QueueId)
 }
+
+// TraceManager 消息追踪管理器（简化版本）
+type TraceManager struct {
+	enabled bool
+}
+
+// NewTraceManager 创建新的追踪管理器
+func NewTraceManager(dispatcher interface{}) *TraceManager {
+	return &TraceManager{}
+}
+
+// SetEnabled 设置是否启用追踪
+func (tm *TraceManager) SetEnabled(enabled bool) {
+	tm.enabled = enabled
+}
+
+// IsEnabled 检查是否启用追踪
+func (tm *TraceManager) IsEnabled() bool {
+	return tm.enabled
+}
+
+// Start 启动追踪管理器
+func (tm *TraceManager) Start() error {
+	return nil
+}
+
+// Stop 停止追踪管理器
+func (tm *TraceManager) Stop() {
+	// 简化实现
+}
+
+// TraceMessage 追踪消息
+func (tm *TraceManager) TraceMessage(context interface{}) {
+	// 简化实现
+}
+
+// ACLMiddleware ACL中间件（简化版本）
+type ACLMiddleware struct {
+	enabled bool
+}
+
+// NewACLMiddleware 创建新的ACL中间件
+func NewACLMiddleware(accessKey, secretKey string, signatureMethod string, enabled bool) *ACLMiddleware {
+	return &ACLMiddleware{enabled: enabled}
+}
+
+// SetEnabled 设置是否启用ACL
+func (acl *ACLMiddleware) SetEnabled(enabled bool) {
+	acl.enabled = enabled
+}
+
+// IsEnabled 检查是否启用ACL
+func (acl *ACLMiddleware) IsEnabled() bool {
+	return acl.enabled
+}
+
+// HmacSHA1 签名方法
+const HmacSHA1 = "HmacSHA1"
+
+// SendStatus 枚举保持不变
+const (
+	SendOK                SendStatus = iota // 发送成功
+	SendFlushDiskTimeout                    // 刷盘超时
+	SendFlushSlaveTimeout                   // 同步到Slave超时
+	SendSlaveNotAvailable                   // Slave不可用
+)
+
+// ConsumeResult 枚举保持不变
+const (
+	ConsumeSuccess ConsumeResult = iota // 消费成功
+	ReconsumeLater                      // 稍后重试
+)
+
+// MessageModel 枚举保持不变
+const (
+	Clustering   MessageModel = iota // 集群模式
+	Broadcasting                     // 广播模式
+)
+
+// ConsumeFromWhere 枚举保持不变
+const (
+	ConsumeFromLastOffset  ConsumeFromWhere = iota // 从最后偏移量开始
+	ConsumeFromFirstOffset                         // 从第一个偏移量开始
+	ConsumeFromTimestamp                           // 从指定时间戳开始
+)

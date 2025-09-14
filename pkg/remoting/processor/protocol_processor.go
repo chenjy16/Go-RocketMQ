@@ -8,10 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"go-rocketmq/pkg/remoting"
-	"go-rocketmq/pkg/remoting/codec"
-	"go-rocketmq/pkg/remoting/heartbeat"
-	"go-rocketmq/pkg/remoting/routing"
+	remoting "github.com/chenjy16/go-rocketmq-remoting"
+	"github.com/chenjy16/go-rocketmq-remoting/codec"
 )
 
 // ProcessorContext 处理器上下文
@@ -325,62 +323,14 @@ func (p *DefaultPullMessageProcessor) GetRequestCode() remoting.RequestCode {
 	return remoting.PullMessage
 }
 
-// DefaultHeartbeatProcessor 默认心跳处理器
-type DefaultHeartbeatProcessor struct {
-	heartbeatManager *heartbeat.HeartbeatManager
-}
-
-// NewDefaultHeartbeatProcessor 创建默认心跳处理器
-func NewDefaultHeartbeatProcessor(heartbeatManager *heartbeat.HeartbeatManager) *DefaultHeartbeatProcessor {
-	return &DefaultHeartbeatProcessor{
-		heartbeatManager: heartbeatManager,
-	}
-}
-
-// ProcessRequest 处理心跳请求
-func (p *DefaultHeartbeatProcessor) ProcessRequest(ctx *ProcessorContext) *ProcessorResult {
-	request := ctx.Request
-
-	// 解析心跳数据
-	var heartbeatData heartbeat.HeartbeatData
-	if request.Body != nil {
-		if err := json.Unmarshal(request.Body, &heartbeatData); err != nil {
-			return &ProcessorResult{
-				Error: fmt.Errorf("failed to parse heartbeat data: %v", err),
-			}
-		}
-	}
-
-	// 处理心跳
-	if p.heartbeatManager != nil {
-		// 更新客户端信息（简化实现）
-		log.Printf("Received heartbeat from client: %s", heartbeatData.ClientID)
-	}
-
-	// 创建响应
-	response := remoting.CreateResponseCommand(remoting.Success, "")
-	response.Opaque = request.Opaque
-
-	return &ProcessorResult{
-		Response: response,
-	}
-}
-
-// GetRequestCode 获取请求代码
-func (p *DefaultHeartbeatProcessor) GetRequestCode() remoting.RequestCode {
-	return remoting.SendMessage // 暂时使用已存在的RequestCode，实际应该定义HeartBeat
-}
-
 // DefaultQueryRouteProcessor 默认查询路由处理器
 type DefaultQueryRouteProcessor struct {
-	routeManager *routing.RouteManager
+	// routeManager interface{} // Placeholder for route manager
 }
 
 // NewDefaultQueryRouteProcessor 创建默认查询路由处理器
-func NewDefaultQueryRouteProcessor(routeManager *routing.RouteManager) *DefaultQueryRouteProcessor {
-	return &DefaultQueryRouteProcessor{
-		routeManager: routeManager,
-	}
+func NewDefaultQueryRouteProcessor() *DefaultQueryRouteProcessor {
+	return &DefaultQueryRouteProcessor{}
 }
 
 // ProcessRequest 处理查询路由请求

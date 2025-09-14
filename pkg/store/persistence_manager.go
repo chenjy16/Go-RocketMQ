@@ -3,40 +3,39 @@ package store
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
-	"go-rocketmq/pkg/common"
+	common "github.com/chenjy16/go-rocketmq-common"
 )
 
 // PersistenceManager 持久化管理器
 type PersistenceManager struct {
 	storeConfig *StoreConfig
 	mutex       sync.RWMutex
-	
+
 	// 消费进度存储
 	consumeProgressFile string
 	consumeProgress     map[string]int64 // key: topic:queueId:consumerGroup, value: offset
 	progressMutex       sync.RWMutex
-	
+
 	// 延迟队列进度存储
 	delayProgressFile string
 	delayProgress     map[int32]int64 // key: delayLevel, value: offset
 	delayMutex        sync.RWMutex
-	
+
 	// 事务状态存储
 	transactionStateFile string
 	transactionStates    map[string]*PersistentTransactionState // key: transactionId
 	transactionMutex     sync.RWMutex
-	
+
 	// 消息索引存储
 	messageIndexFile string
 	messageIndex     map[string]*MessageIndex // key: messageKey
 	indexMutex       sync.RWMutex
-	
+
 	// 自动保存定时器
 	autoSaveTicker *time.Ticker
 	stopChan       chan struct{}
@@ -77,13 +76,13 @@ type DelayProgressData struct {
 // TransactionStateData 事务状态数据结构
 type TransactionStateData struct {
 	States     map[string]*PersistentTransactionState `json:"states"`
-	UpdateTime int64                                   `json:"updateTime"`
+	UpdateTime int64                                  `json:"updateTime"`
 }
 
 // MessageIndexData 消息索引数据结构
 type MessageIndexData struct {
 	Index      map[string]*MessageIndex `json:"index"`
-	UpdateTime int64                     `json:"updateTime"`
+	UpdateTime int64                    `json:"updateTime"`
 }
 
 // NewPersistenceManager 创建持久化管理器
@@ -91,10 +90,10 @@ func NewPersistenceManager(config *StoreConfig) *PersistenceManager {
 	if config == nil {
 		config = NewDefaultStoreConfig()
 	}
-	
+
 	persistenceDir := filepath.Join(config.StorePathRootDir, "persistence")
 	os.MkdirAll(persistenceDir, 0755)
-	
+
 	pm := &PersistenceManager{
 		storeConfig:          config,
 		consumeProgressFile:  filepath.Join(persistenceDir, "consume_progress.json"),
@@ -107,7 +106,7 @@ func NewPersistenceManager(config *StoreConfig) *PersistenceManager {
 		messageIndex:         make(map[string]*MessageIndex),
 		stopChan:             make(chan struct{}),
 	}
-	
+
 	return pm
 }
 
@@ -115,28 +114,28 @@ func NewPersistenceManager(config *StoreConfig) *PersistenceManager {
 func (pm *PersistenceManager) Start() error {
 	pm.mutex.Lock()
 	defer pm.mutex.Unlock()
-	
+
 	// 加载所有持久化数据
 	if err := pm.loadConsumeProgress(); err != nil {
 		return fmt.Errorf("failed to load consume progress: %v", err)
 	}
-	
+
 	if err := pm.loadDelayProgress(); err != nil {
 		return fmt.Errorf("failed to load delay progress: %v", err)
 	}
-	
+
 	if err := pm.loadTransactionStates(); err != nil {
 		return fmt.Errorf("failed to load transaction states: %v", err)
 	}
-	
+
 	if err := pm.loadMessageIndex(); err != nil {
 		return fmt.Errorf("failed to load message index: %v", err)
 	}
-	
+
 	// 启动自动保存定时器（每30秒保存一次）
 	pm.autoSaveTicker = time.NewTicker(30 * time.Second)
 	go pm.autoSaveLoop()
-	
+
 	return nil
 }
 
@@ -144,13 +143,13 @@ func (pm *PersistenceManager) Start() error {
 func (pm *PersistenceManager) Stop() error {
 	pm.mutex.Lock()
 	defer pm.mutex.Unlock()
-	
+
 	// 停止自动保存
 	if pm.autoSaveTicker != nil {
 		pm.autoSaveTicker.Stop()
 	}
 	close(pm.stopChan)
-	
+
 	// 最后一次保存所有数据
 	return pm.saveAll()
 }
@@ -202,7 +201,7 @@ func (pm *PersistenceManager) GetConsumeProgress(topic string, queueId int32, co
 	pm.progressMutex.RLock()
 	offset, exists := pm.consumeProgress[key]
 	pm.progressMutex.RUnlock()
-	
+
 	if !exists {
 		return -1 // 表示没有消费进度
 	}
@@ -211,23 +210,23 @@ func (pm *PersistenceManager) GetConsumeProgress(topic string, queueId int32, co
 
 // loadConsumeProgress 加载消费进度
 func (pm *PersistenceManager) loadConsumeProgress() error {
-	data, err := ioutil.ReadFile(pm.consumeProgressFile)
+	data, err := os.ReadFile(pm.consumeProgressFile)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil // 文件不存在，使用默认值
 		}
 		return err
 	}
-	
+
 	var progressData ConsumeProgressData
 	if err := json.Unmarshal(data, &progressData); err != nil {
 		return err
 	}
-	
+
 	pm.progressMutex.Lock()
 	pm.consumeProgress = progressData.Progress
 	pm.progressMutex.Unlock()
-	
+
 	return nil
 }
 
@@ -239,18 +238,18 @@ func (pm *PersistenceManager) saveConsumeProgress() error {
 		progressCopy[k] = v
 	}
 	pm.progressMutex.RUnlock()
-	
+
 	progressData := ConsumeProgressData{
 		Progress:   progressCopy,
 		UpdateTime: time.Now().Unix(),
 	}
-	
+
 	data, err := json.MarshalIndent(progressData, "", "  ")
 	if err != nil {
 		return err
 	}
-	
-	return ioutil.WriteFile(pm.consumeProgressFile, data, 0644)
+
+	return os.WriteFile(pm.consumeProgressFile, data, 0644)
 }
 
 // === 延迟队列进度相关方法 ===
@@ -267,7 +266,7 @@ func (pm *PersistenceManager) GetDelayProgress(delayLevel int32) int64 {
 	pm.delayMutex.RLock()
 	offset, exists := pm.delayProgress[delayLevel]
 	pm.delayMutex.RUnlock()
-	
+
 	if !exists {
 		return 0 // 默认从0开始
 	}
@@ -276,23 +275,23 @@ func (pm *PersistenceManager) GetDelayProgress(delayLevel int32) int64 {
 
 // loadDelayProgress 加载延迟队列进度
 func (pm *PersistenceManager) loadDelayProgress() error {
-	data, err := ioutil.ReadFile(pm.delayProgressFile)
+	data, err := os.ReadFile(pm.delayProgressFile)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
 		return err
 	}
-	
+
 	var delayData DelayProgressData
 	if err := json.Unmarshal(data, &delayData); err != nil {
 		return err
 	}
-	
+
 	pm.delayMutex.Lock()
 	pm.delayProgress = delayData.Progress
 	pm.delayMutex.Unlock()
-	
+
 	return nil
 }
 
@@ -304,18 +303,18 @@ func (pm *PersistenceManager) saveDelayProgress() error {
 		progressCopy[k] = v
 	}
 	pm.delayMutex.RUnlock()
-	
+
 	delayData := DelayProgressData{
 		Progress:   progressCopy,
 		UpdateTime: time.Now().Unix(),
 	}
-	
+
 	data, err := json.MarshalIndent(delayData, "", "  ")
 	if err != nil {
 		return err
 	}
-	
-	return ioutil.WriteFile(pm.delayProgressFile, data, 0644)
+
+	return os.WriteFile(pm.delayProgressFile, data, 0644)
 }
 
 // === 事务状态相关方法 ===
@@ -333,7 +332,7 @@ func (pm *PersistenceManager) GetTransactionState(transactionId string) *Persist
 	pm.transactionMutex.RLock()
 	state, exists := pm.transactionStates[transactionId]
 	pm.transactionMutex.RUnlock()
-	
+
 	if !exists {
 		return nil
 	}
@@ -349,7 +348,7 @@ func (pm *PersistenceManager) RemoveTransactionState(transactionId string) {
 
 // loadTransactionStates 加载事务状态
 func (pm *PersistenceManager) loadTransactionStates() error {
-	data, err := ioutil.ReadFile(pm.transactionStateFile)
+	data, err := os.ReadFile(pm.transactionStateFile)
 	if err != nil {
 		if os.IsNotExist(err) {
 			fmt.Printf("Transaction state file does not exist: %s\n", pm.transactionStateFile)
@@ -357,16 +356,16 @@ func (pm *PersistenceManager) loadTransactionStates() error {
 		}
 		return err
 	}
-	
+
 	var stateData TransactionStateData
 	if err := json.Unmarshal(data, &stateData); err != nil {
 		return err
 	}
-	
+
 	pm.transactionMutex.Lock()
 	pm.transactionStates = stateData.States
 	pm.transactionMutex.Unlock()
-	
+
 	fmt.Printf("Loaded %d transaction states from file: %s\n", len(stateData.States), pm.transactionStateFile)
 	return nil
 }
@@ -379,19 +378,19 @@ func (pm *PersistenceManager) saveTransactionStates() error {
 		statesCopy[k] = v
 	}
 	pm.transactionMutex.RUnlock()
-	
+
 	stateData := TransactionStateData{
 		States:     statesCopy,
 		UpdateTime: time.Now().Unix(),
 	}
-	
+
 	data, err := json.MarshalIndent(stateData, "", "  ")
 	if err != nil {
 		return err
 	}
-	
+
 	fmt.Printf("Saving %d transaction states to file: %s\n", len(statesCopy), pm.transactionStateFile)
-	err = ioutil.WriteFile(pm.transactionStateFile, data, 0644)
+	err = os.WriteFile(pm.transactionStateFile, data, 0644)
 	if err != nil {
 		fmt.Printf("Failed to write transaction state file: %v\n", err)
 		return err
@@ -414,7 +413,7 @@ func (pm *PersistenceManager) GetMessageIndex(messageKey string) *MessageIndex {
 	pm.indexMutex.RLock()
 	index, exists := pm.messageIndex[messageKey]
 	pm.indexMutex.RUnlock()
-	
+
 	if !exists {
 		return nil
 	}
@@ -425,7 +424,7 @@ func (pm *PersistenceManager) GetMessageIndex(messageKey string) *MessageIndex {
 func (pm *PersistenceManager) QueryMessagesByKey(messageKey string) []*MessageIndex {
 	pm.indexMutex.RLock()
 	defer pm.indexMutex.RUnlock()
-	
+
 	var results []*MessageIndex
 	for key, index := range pm.messageIndex {
 		if key == messageKey {
@@ -439,7 +438,7 @@ func (pm *PersistenceManager) QueryMessagesByKey(messageKey string) []*MessageIn
 func (pm *PersistenceManager) QueryMessagesByTimeRange(startTime, endTime int64) []*MessageIndex {
 	pm.indexMutex.RLock()
 	defer pm.indexMutex.RUnlock()
-	
+
 	var results []*MessageIndex
 	for _, index := range pm.messageIndex {
 		if index.StoreTime >= startTime && index.StoreTime <= endTime {
@@ -451,23 +450,23 @@ func (pm *PersistenceManager) QueryMessagesByTimeRange(startTime, endTime int64)
 
 // loadMessageIndex 加载消息索引
 func (pm *PersistenceManager) loadMessageIndex() error {
-	data, err := ioutil.ReadFile(pm.messageIndexFile)
+	data, err := os.ReadFile(pm.messageIndexFile)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
 		return err
 	}
-	
+
 	var indexData MessageIndexData
 	if err := json.Unmarshal(data, &indexData); err != nil {
 		return err
 	}
-	
+
 	pm.indexMutex.Lock()
 	pm.messageIndex = indexData.Index
 	pm.indexMutex.Unlock()
-	
+
 	return nil
 }
 
@@ -479,25 +478,25 @@ func (pm *PersistenceManager) saveMessageIndex() error {
 		indexCopy[k] = v
 	}
 	pm.indexMutex.RUnlock()
-	
+
 	indexData := MessageIndexData{
 		Index:      indexCopy,
 		UpdateTime: time.Now().Unix(),
 	}
-	
+
 	data, err := json.MarshalIndent(indexData, "", "  ")
 	if err != nil {
 		return err
 	}
-	
-	return ioutil.WriteFile(pm.messageIndexFile, data, 0644)
+
+	return os.WriteFile(pm.messageIndexFile, data, 0644)
 }
 
 // GetAllConsumeProgress 获取所有消费进度
 func (pm *PersistenceManager) GetAllConsumeProgress() map[string]int64 {
 	pm.progressMutex.RLock()
 	defer pm.progressMutex.RUnlock()
-	
+
 	result := make(map[string]int64)
 	for k, v := range pm.consumeProgress {
 		result[k] = v
@@ -509,7 +508,7 @@ func (pm *PersistenceManager) GetAllConsumeProgress() map[string]int64 {
 func (pm *PersistenceManager) GetAllDelayProgress() map[int32]int64 {
 	pm.delayMutex.RLock()
 	defer pm.delayMutex.RUnlock()
-	
+
 	result := make(map[int32]int64)
 	for k, v := range pm.delayProgress {
 		result[k] = v
@@ -521,7 +520,7 @@ func (pm *PersistenceManager) GetAllDelayProgress() map[int32]int64 {
 func (pm *PersistenceManager) GetAllTransactionStates() map[string]*PersistentTransactionState {
 	pm.transactionMutex.RLock()
 	defer pm.transactionMutex.RUnlock()
-	
+
 	result := make(map[string]*PersistentTransactionState)
 	for k, v := range pm.transactionStates {
 		result[k] = v

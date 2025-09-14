@@ -43,8 +43,7 @@ $(BIN_DIR):
 	mkdir -p $(BIN_DIR)
 
 # 构建所有组件
-build: build-nameserver build-broker build-examples build-benchmark build-tools build-client
-	@echo "所有组件构建完成"
+build: build-nameserver build-broker build-examples build-benchmark build-tools
 
 # 构建 NameServer
 build-nameserver: $(BIN_DIR)
@@ -84,8 +83,7 @@ clean:
 	rm -rf $(BUILD_DIR)
 
 # 运行测试
-test:
-	$(GOTEST) -v ./...
+test: test-nameserver test-broker test-store test-cluster test-ha test-acl test-performance test-remoting test-common
 
 # 运行 NameServer
 run-nameserver: build-nameserver
@@ -144,7 +142,13 @@ lint:
 	golangci-lint run
 
 # 开发环境设置
-dev-setup: deps install-tools
+dev-setup: deps install-tools setup-modules
+
+# 设置模块化开发环境
+setup-modules:
+	@echo "$(BLUE)设置模块化开发环境...$(NC)"
+	@./scripts/setup-submodules.sh
+	@echo "$(GREEN)模块化开发环境设置完成$(NC)"
 
 # 启动开发环境
 dev: run-nameserver
@@ -239,7 +243,6 @@ help:
 	@echo "  build-nameserver - Build NameServer"
 	@echo "  build-broker    - Build Broker"
 	@echo "  build-examples  - Build example programs"
-	@echo "  build-client    - Build client library"
 	@echo "  clean           - Clean build files"
 	@echo ""
 	@echo "$(BLUE)测试相关:$(NC)"
@@ -250,7 +253,6 @@ help:
 	@echo "  test-coverage-html - Generate HTML coverage report"
 	@echo "  test-integration - Run integration tests"
 	@echo "  test-benchmark  - Run benchmark tests"
-	@echo "  test-client     - Test client library"
 	@echo ""
 	@echo "$(BLUE)代码质量:$(NC)"
 	@echo "  fmt             - Format code"

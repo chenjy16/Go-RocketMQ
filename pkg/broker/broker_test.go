@@ -7,9 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"go-rocketmq/pkg/common"
-	"go-rocketmq/pkg/remoting"
 	"go-rocketmq/pkg/store"
+
+	common "github.com/chenjy16/go-rocketmq-common"
+	remoting "github.com/chenjy16/go-rocketmq-remoting"
 )
 
 // TestDefaultBrokerConfig 测试默认Broker配置

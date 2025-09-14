@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"go-rocketmq/pkg/remoting/client"
-	"go-rocketmq/pkg/remoting/server"
+	"github.com/chenjy16/go-rocketmq-remoting/client"
+	"github.com/chenjy16/go-rocketmq-remoting/server"
 )
 
 // ========== PROTOCOL DEFINITIONS (merged from protocol package) ==========

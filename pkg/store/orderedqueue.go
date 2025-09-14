@@ -5,7 +5,7 @@ import (
 	"log"
 	"sync"
 
-	"go-rocketmq/pkg/common"
+	common "github.com/chenjy16/go-rocketmq-common"
 )
 
 // 顺序消息相关常量
@@ -18,14 +18,14 @@ const (
 
 // OrderedQueueService 顺序队列服务
 type OrderedQueueService struct {
-	storeConfig   *StoreConfig
-	messageStore  *DefaultMessageStore
-	running       bool
-	mutex         sync.RWMutex
-	shutdown      chan struct{}
+	storeConfig  *StoreConfig
+	messageStore *DefaultMessageStore
+	running      bool
+	mutex        sync.RWMutex
+	shutdown     chan struct{}
 	// 队列锁管理，确保同一队列的消息顺序处理
-	queueLocks    map[string]*sync.Mutex // topic:queueId -> lock
-	lockMutex     sync.RWMutex
+	queueLocks map[string]*sync.Mutex // topic:queueId -> lock
+	lockMutex  sync.RWMutex
 	// 顺序消费进度管理
 	consumeProgress map[string]int64 // topic:queueId:consumerGroup -> offset
 	progressMutex   sync.RWMutex
@@ -132,7 +132,7 @@ func (oqs *OrderedQueueService) PullOrderedMessage(topic string, queueId int32, 
 		}
 	}
 
-	log.Printf("Pulled %d ordered messages from queue %s:%d for consumer group: %s", 
+	log.Printf("Pulled %d ordered messages from queue %s:%d for consumer group: %s",
 		len(orderedMessages), topic, queueId, consumerGroup)
 	return orderedMessages, nil
 }
@@ -140,7 +140,7 @@ func (oqs *OrderedQueueService) PullOrderedMessage(topic string, queueId int32, 
 // CommitConsumeOffset 提交消费进度
 func (oqs *OrderedQueueService) CommitConsumeOffset(topic string, queueId int32, consumerGroup string, offset int64) error {
 	progressKey := fmt.Sprintf("%s:%d:%s", topic, queueId, consumerGroup)
-	
+
 	oqs.progressMutex.Lock()
 	oqs.consumeProgress[progressKey] = offset
 	oqs.progressMutex.Unlock()
@@ -152,7 +152,7 @@ func (oqs *OrderedQueueService) CommitConsumeOffset(topic string, queueId int32,
 // GetConsumeOffset 获取消费进度
 func (oqs *OrderedQueueService) GetConsumeOffset(topic string, queueId int32, consumerGroup string) int64 {
 	progressKey := fmt.Sprintf("%s:%d:%s", topic, queueId, consumerGroup)
-	
+
 	oqs.progressMutex.RLock()
 	offset, exists := oqs.consumeProgress[progressKey]
 	oqs.progressMutex.RUnlock()
@@ -282,8 +282,8 @@ type OrderedConsumer interface {
 
 // ConsumeOrderlyContext 顺序消费上下文
 type ConsumeOrderlyContext struct {
-	MessageQueue  *common.MessageQueue
-	AutoCommit    bool
+	MessageQueue      *common.MessageQueue
+	AutoCommit        bool
 	SuspendTimeMillis int64
 }
 

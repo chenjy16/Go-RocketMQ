@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"go-rocketmq/pkg/common"
+	common "github.com/chenjy16/go-rocketmq-common"
 )
 
 // TestTransactionPersistence 测试事务消息持久化
@@ -20,17 +20,17 @@ func TestTransactionPersistence(t *testing.T) {
 
 	// 创建配置
 	config := &StoreConfig{
-		StorePathRootDir:      tempDir,
-		StorePathCommitLog:    filepath.Join(tempDir, "commitlog"),
-		StorePathConsumeQueue: filepath.Join(tempDir, "consumequeue"),
-		StorePathIndex:        filepath.Join(tempDir, "index"),
-		MapedFileSizeCommitLog:   1024 * 1024, // 1MB
+		StorePathRootDir:          tempDir,
+		StorePathCommitLog:        filepath.Join(tempDir, "commitlog"),
+		StorePathConsumeQueue:     filepath.Join(tempDir, "consumequeue"),
+		StorePathIndex:            filepath.Join(tempDir, "index"),
+		MapedFileSizeCommitLog:    1024 * 1024, // 1MB
 		MapedFileSizeConsumeQueue: 6000,
-		FlushDiskType:         ASYNC_FLUSH,
-		FlushIntervalCommitLog: 500,
-		FileReservedTime:      72,
-		DeleteWhen:            "04",
-		DiskMaxUsedSpaceRatio: 75,
+		FlushDiskType:             ASYNC_FLUSH,
+		FlushIntervalCommitLog:    500,
+		FileReservedTime:          72,
+		DeleteWhen:                "04",
+		DiskMaxUsedSpaceRatio:     75,
 	}
 
 	// 创建消息存储
@@ -59,10 +59,10 @@ func TestTransactionPersistence(t *testing.T) {
 func testTransactionPrepare(t *testing.T, messageStore *DefaultMessageStore) {
 	// 创建测试消息
 	msg := &common.Message{
-		Topic: "TestTransactionTopic",
-		Tags:  "TestTag",
-		Keys:  "TestKey",
-		Body:  []byte("test transaction message"),
+		Topic:      "TestTransactionTopic",
+		Tags:       "TestTag",
+		Keys:       "TestKey",
+		Body:       []byte("test transaction message"),
 		Properties: make(map[string]string),
 	}
 
@@ -114,10 +114,10 @@ func testTransactionPrepare(t *testing.T, messageStore *DefaultMessageStore) {
 func testTransactionStatePersistence(t *testing.T, messageStore *DefaultMessageStore, config *StoreConfig) {
 	// 创建测试消息
 	msg := &common.Message{
-		Topic: "TestPersistenceTopic",
-		Tags:  "PersistTag",
-		Keys:  "PersistKey",
-		Body:  []byte("test persistence message"),
+		Topic:      "TestPersistenceTopic",
+		Tags:       "PersistTag",
+		Keys:       "PersistKey",
+		Body:       []byte("test persistence message"),
 		Properties: make(map[string]string),
 	}
 
@@ -147,7 +147,7 @@ func testTransactionStatePersistence(t *testing.T, messageStore *DefaultMessageS
 		t.Fatalf("Failed to save persistence data: %v", err)
 	}
 	t.Logf("Persistence data saved successfully")
-	
+
 	// 停止消息存储
 	messageStore.Shutdown()
 
@@ -209,13 +209,13 @@ func testTransactionTimeout(t *testing.T, messageStore *DefaultMessageStore) {
 			t.Fatalf("Failed to start message store: %v", err)
 		}
 	}
-	
+
 	// 创建测试消息
 	msg := &common.Message{
-		Topic: "TestTimeoutTopic",
-		Tags:  "TimeoutTag",
-		Keys:  "TimeoutKey",
-		Body:  []byte("test timeout message"),
+		Topic:      "TestTimeoutTopic",
+		Tags:       "TimeoutTag",
+		Keys:       "TimeoutKey",
+		Body:       []byte("test timeout message"),
 		Properties: make(map[string]string),
 	}
 
@@ -241,7 +241,7 @@ func testTransactionTimeout(t *testing.T, messageStore *DefaultMessageStore) {
 	txService.transactionMutex.Lock()
 	record := txService.transactionMap[transactionId]
 	if record != nil {
-		record.CheckCount = 16 // 超过最大检查次数15
+		record.CheckCount = 16                               // 超过最大检查次数15
 		record.UpdateTime = time.Now().Add(-2 * time.Minute) // 设置为2分钟前
 	}
 	txService.transactionMutex.Unlock()

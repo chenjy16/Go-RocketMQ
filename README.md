@@ -13,37 +13,31 @@ Go-RocketMQ is a Go language implementation that provides complete message queue
 ## Architecture Design
 
 ```
-┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-│   Producer  │    │   Producer  │    │   Producer  │
-└──────┬──────┘    └──────┬──────┘    └──────┬──────┘
-       │                  │                  │
-       └──────────────────┼──────────────────┘
-                          │
-                   ┌──────▼──────┐
-                   │ NameServer  │
-                   │   Cluster   │
-                   └──────┬──────┘
-                          │
-       ┌──────────────────┼──────────────────┐
-       │                  │                  │
-┌──────▼──────┐    ┌──────▼──────┐    ┌──────▼──────┐
-│   Broker-1  │    │   Broker-2  │    │   Broker-3  │
-│   Master    │    │   Master    │    │   Master    │
-└──────┬──────┘    └──────┬──────┘    └──────┬──────┘
-       │                  │                  │
-┌──────▼──────┐    ┌──────▼──────┐    ┌──────▼──────┐
-│   Broker-1  │    │   Broker-2  │    │   Broker-3  │
-│    Slave    │    │    Slave    │    │    Slave    │
-└─────────────┘    └─────────────┘    └─────────────┘
-       │                  │                  │
-       └──────────────────┼──────────────────┘
-                          │
-       ┌──────────────────┼──────────────────┐
-       │                  │                  │
-┌──────▼──────┐    ┌──────▼──────┐    ┌──────▼──────┐
-│  Consumer   │    │  Consumer   │    │  Consumer   │
-│   Group-1   │    │   Group-2   │    │   Group-3   │
-└─────────────┘    └─────────────┘    └─────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                        Go-RocketMQ Project                          │
+│                          (Main Repository)                          │
+└─────────────────────────────────────────────────────────────────────┘
+                                    │
+        ┌───────────────────────────┼───────────────────────────┐
+        │                           │                           │
+┌───────▼────────┐        ┌─────────▼─────────┐        ┌────────▼────────┐
+│   Producer     │        │   NameServer      │        │   Consumer      │
+│  (Client Mod)  │        │  (Main Repo)      │        │  (Client Mod)   │
+└───────┬────────┘        └─────────┬─────────┘        └────────┬────────┘
+        │                           │                           │
+        └───────────────────────────┼───────────────────────────┘
+                                    │
+                        ┌───────────▼───────────┐
+                        │       Broker          │
+                        │      (Main Repo)      │
+                        └───────────┬───────────┘
+                                    │
+        ┌───────────────────────────┼───────────────────────────┐
+        │                           │                           │
+┌───────▼────────┐        ┌─────────▼─────────┐        ┌────────▼────────┐
+│   Remoting     │        │      Common       │        │     Store       │
+│   (Submodule)  │        │   (Submodule)     │        │   (Main Repo)   │
+└────────────────┘        └───────────────────┘        └─────────────────┘
 ```
 
 ## Core Features
@@ -83,6 +77,15 @@ Go-RocketMQ is a Go language implementation that provides complete message queue
 - **Broker Clustering**: Multi-broker deployment support
 - **NameServer Clustering**: Distributed metadata management
 - **Fault Tolerance**: Continue operation with partial failures
+
+### 🔌 Modular Architecture
+Go-RocketMQ follows a modular design where core components are separated into independent modules:
+
+1. **Remoting Module** (`github.com/chenjy16/go-rocketmq-remoting`): Handles network communication and remote procedure calls
+2. **Common Module** (`github.com/chenjy16/go-rocketmq-common`): Contains shared data structures and utilities
+3. **Client Module** (`github.com/chenjy16/go-rocketmq-client`): Provides producer and consumer implementations
+
+These modules can be used independently or together as submodules. See [README-SUBMODULES.md](README-SUBMODULES.md) for detailed setup instructions.
 
 ## Core Components
 
@@ -147,6 +150,8 @@ go-rocketmq/
 │   ├── cluster/          # Cluster management
 │   ├── failover/         # Failover
 │   └── ha/               # High availability
+├── scripts/              # Setup and utility scripts
+│   └── setup-submodules.sh # Submodule initialization script
 ├── examples/             # Example programs
 │   ├── README.md         # Example documentation
 │   ├── basic/           # Basic examples

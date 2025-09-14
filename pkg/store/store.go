@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"go-rocketmq/pkg/common"
+	common "github.com/chenjy16/go-rocketmq-common"
 )
 
 // MessageTrace 消息轨迹结构
@@ -36,27 +36,27 @@ type StoreConfig struct {
 	StorePathConsumeQueue string
 	// Index存储目录
 	StorePathIndex string
-	
+
 	// 文件大小配置
-	MapedFileSizeCommitLog   int64 // CommitLog文件大小，默认1GB
+	MapedFileSizeCommitLog    int64 // CommitLog文件大小，默认1GB
 	MapedFileSizeConsumeQueue int64 // ConsumeQueue文件大小，默认300万条记录
-	MapedFileSizeIndexFile   int64 // IndexFile文件大小，默认400万条记录
-	
+	MapedFileSizeIndexFile    int64 // IndexFile文件大小，默认400万条记录
+
 	// 刷盘配置
-	FlushDiskType            FlushDiskType // 刷盘方式
-	FlushIntervalCommitLog   int           // CommitLog刷盘间隔(ms)
-	FlushCommitLogLeastPages int           // CommitLog刷盘最少页数
-	FlushConsumeQueueLeastPages int        // ConsumeQueue刷盘最少页数
-	FlushIntervalConsumeQueue int          // ConsumeQueue刷盘间隔(ms)
-	
+	FlushDiskType               FlushDiskType // 刷盘方式
+	FlushIntervalCommitLog      int           // CommitLog刷盘间隔(ms)
+	FlushCommitLogLeastPages    int           // CommitLog刷盘最少页数
+	FlushConsumeQueueLeastPages int           // ConsumeQueue刷盘最少页数
+	FlushIntervalConsumeQueue   int           // ConsumeQueue刷盘间隔(ms)
+
 	// 文件保留配置
-	FileReservedTime int // 文件保留时间(小时)
-	DeleteWhen       string // 删除文件的时间点
-	DiskMaxUsedSpaceRatio int // 磁盘最大使用比例
-	
+	FileReservedTime      int    // 文件保留时间(小时)
+	DeleteWhen            string // 删除文件的时间点
+	DiskMaxUsedSpaceRatio int    // 磁盘最大使用比例
+
 	// 其他配置
-	TransientStorePoolEnable bool // 是否启用堆外内存
-	TransientStorePoolSize   int  // 堆外内存池大小
+	TransientStorePoolEnable      bool // 是否启用堆外内存
+	TransientStorePoolSize        int  // 堆外内存池大小
 	FastFailIfNoBufferInStorePool bool // 如果内存池没有缓冲区是否快速失败
 }
 
@@ -73,26 +73,26 @@ const (
 // DefaultMessageStore 默认消息存储实现
 type DefaultMessageStore struct {
 	storeConfig *StoreConfig
-	
+
 	// 存储组件
-	commitLog     *CommitLog
+	commitLog         *CommitLog
 	consumeQueueTable map[string]*ConsumeQueue // topic -> ConsumeQueue
-	indexService  *IndexService
-	
+	indexService      *IndexService
+
 	// 高级功能服务
-	delayQueueService    *DelayQueueService
-	transactionService   *TransactionService
-	orderedQueueService  *OrderedQueueService
-	persistenceManager   *PersistenceManager
-	
+	delayQueueService   *DelayQueueService
+	transactionService  *TransactionService
+	orderedQueueService *OrderedQueueService
+	persistenceManager  *PersistenceManager
+
 	// 控制字段
-	running bool
+	running      bool
 	shutdownOnce sync.Once
-	mutex   sync.RWMutex
-	
+	mutex        sync.RWMutex
+
 	// 停止信号
 	shutdown chan struct{}
-	
+
 	// 队列选择计数器
 	queueSelector int32
 }
@@ -102,40 +102,40 @@ func NewDefaultMessageStore(config *StoreConfig) (*DefaultMessageStore, error) {
 	if config == nil {
 		config = NewDefaultStoreConfig()
 	}
-	
+
 	// 创建存储目录
 	if err := createStoreDirectories(config); err != nil {
 		return nil, fmt.Errorf("failed to create store directories: %v", err)
 	}
-	
+
 	store := &DefaultMessageStore{
 		storeConfig:       config,
 		consumeQueueTable: make(map[string]*ConsumeQueue),
 		shutdown:          make(chan struct{}),
 	}
-	
+
 	// 初始化CommitLog
 	commitLog, err := NewCommitLog(config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create commit log: %v", err)
 	}
 	store.commitLog = commitLog
-	
+
 	// 初始化IndexService
 	store.indexService = NewIndexService(config.StorePathIndex)
-	
+
 	// 初始化持久化管理器（必须在其他服务之前初始化）
 	store.persistenceManager = NewPersistenceManager(config)
-	
+
 	// 初始化延迟队列服务
 	store.delayQueueService = NewDelayQueueService(config, store)
-	
+
 	// 初始化事务消息服务
 	store.transactionService = NewTransactionService(config, store, store.persistenceManager)
-	
+
 	// 初始化顺序队列服务
 	store.orderedQueueService = NewOrderedQueueService(config, store)
-	
+
 	return store, nil
 }
 
@@ -146,21 +146,21 @@ func NewDefaultStoreConfig() *StoreConfig {
 		StorePathCommitLog:    "./store/commitlog",
 		StorePathConsumeQueue: "./store/consumequeue",
 		StorePathIndex:        "./store/index",
-		
-		MapedFileSizeCommitLog:   1024 * 1024 * 1024, // 1GB
+
+		MapedFileSizeCommitLog:    1024 * 1024 * 1024, // 1GB
 		MapedFileSizeConsumeQueue: 300000 * 20,        // 300万条记录 * 20字节
-		MapedFileSizeIndexFile:   400000 * 400,        // 400万条记录 * 400字节
-		
+		MapedFileSizeIndexFile:    400000 * 400,       // 400万条记录 * 400字节
+
 		FlushDiskType:               ASYNC_FLUSH,
 		FlushIntervalCommitLog:      500,  // 500ms
 		FlushCommitLogLeastPages:    4,    // 4页
 		FlushConsumeQueueLeastPages: 2,    // 2页
 		FlushIntervalConsumeQueue:   1000, // 1000ms
-		
+
 		FileReservedTime:      72,   // 72小时
 		DeleteWhen:            "04", // 凌晨4点
 		DiskMaxUsedSpaceRatio: 75,   // 75%
-		
+
 		TransientStorePoolEnable:      false,
 		TransientStorePoolSize:        5,
 		FastFailIfNoBufferInStorePool: false,
@@ -175,13 +175,13 @@ func createStoreDirectories(config *StoreConfig) error {
 		config.StorePathConsumeQueue,
 		config.StorePathIndex,
 	}
-	
+
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return fmt.Errorf("failed to create directory %s: %v", dir, err)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -189,46 +189,46 @@ func createStoreDirectories(config *StoreConfig) error {
 func (store *DefaultMessageStore) Start() error {
 	store.mutex.Lock()
 	defer store.mutex.Unlock()
-	
+
 	if store.running {
 		return fmt.Errorf("message store is already running")
 	}
-	
+
 	// 启动持久化管理器（必须在其他服务之前启动）
 	if err := store.persistenceManager.Start(); err != nil {
 		return fmt.Errorf("failed to start persistence manager: %v", err)
 	}
-	
+
 	// 恢复ConsumeQueue
 	if err := store.recoverConsumeQueues(); err != nil {
 		return fmt.Errorf("failed to recover consume queues: %v", err)
 	}
-	
+
 	// 启动CommitLog
 	if err := store.commitLog.Start(); err != nil {
 		return fmt.Errorf("failed to start commit log: %v", err)
 	}
-	
+
 	// 启动IndexService
 	if err := store.indexService.Start(); err != nil {
 		return fmt.Errorf("failed to start index service: %v", err)
 	}
-	
+
 	// 启动延迟队列服务
 	if err := store.delayQueueService.Start(); err != nil {
 		return fmt.Errorf("failed to start delay queue service: %v", err)
 	}
-	
+
 	// 启动事务消息服务
 	if err := store.transactionService.Start(); err != nil {
 		return fmt.Errorf("failed to start transaction service: %v", err)
 	}
-	
+
 	// 启动顺序队列服务
 	if err := store.orderedQueueService.Start(); err != nil {
 		return fmt.Errorf("failed to start ordered queue service: %v", err)
 	}
-	
+
 	store.running = true
 	return nil
 }
@@ -238,33 +238,33 @@ func (store *DefaultMessageStore) Shutdown() {
 	store.shutdownOnce.Do(func() {
 		store.mutex.Lock()
 		defer store.mutex.Unlock()
-		
+
 		if !store.running {
 			return
 		}
-		
+
 		// 发送停止信号
 		close(store.shutdown)
-		
+
 		// 停止新增服务
 		store.delayQueueService.Shutdown()
 		store.transactionService.Shutdown()
 		store.orderedQueueService.Shutdown()
-		
+
 		// 停止持久化管理器
 		store.persistenceManager.Stop()
-		
+
 		// 停止IndexService
 		store.indexService.Shutdown()
-		
+
 		// 停止CommitLog
 		store.commitLog.Shutdown()
-		
+
 		// 停止所有ConsumeQueue
 		for _, cq := range store.consumeQueueTable {
 			cq.Shutdown()
 		}
-		
+
 		store.running = false
 	})
 }
@@ -281,15 +281,15 @@ func (store *DefaultMessageStore) PutMessageToQueue(msg *common.Message, queueId
 	if !store.running {
 		return nil, fmt.Errorf("message store is not running")
 	}
-	
+
 	if msg == nil {
 		return nil, fmt.Errorf("message cannot be nil")
 	}
-	
+
 	if msg.Topic == "" {
 		return nil, fmt.Errorf("message topic cannot be empty")
 	}
-	
+
 	// 构建消息扩展信息
 	msgExt := &common.MessageExt{
 		Message:        msg,
@@ -302,24 +302,24 @@ func (store *DefaultMessageStore) PutMessageToQueue(msg *common.Message, queueId
 		BornHost:       "127.0.0.1:0",
 		StoreHost:      "127.0.0.1:10911",
 	}
-	
+
 	// 存储到CommitLog
 	result, err := store.commitLog.PutMessage(msgExt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to put message to commit log: %v", err)
 	}
-	
+
 	// 更新ConsumeQueue
 	if err := store.updateConsumeQueue(msgExt, result); err != nil {
 		return nil, fmt.Errorf("failed to update consume queue: %v", err)
 	}
-	
+
 	// 更新Index
 	if err := store.updateIndex(msgExt, result); err != nil {
 		// Index更新失败不影响消息存储
 		fmt.Printf("Warning: failed to build index: %v\n", err)
 	}
-	
+
 	return result, nil
 }
 
@@ -327,26 +327,26 @@ func (store *DefaultMessageStore) PutMessageToQueue(msg *common.Message, queueId
 func (store *DefaultMessageStore) updateIndex(msgExt *common.MessageExt, result *common.SendResult) error {
 	// 构建索引key
 	keys := make([]string, 0)
-	
+
 	// 添加消息Key
 	if msgExt.Keys != "" {
 		keys = append(keys, msgExt.Keys)
 	}
-	
+
 	// 添加UniqKey
 	if uniqKey := msgExt.GetProperty("UNIQ_KEY"); uniqKey != "" {
 		keys = append(keys, uniqKey)
 	}
-	
+
 	// 添加消息ID作为索引key
 	if result.MsgId != "" {
 		keys = append(keys, result.MsgId)
 	}
-	
+
 	// 构建索引
 	for _, key := range keys {
 		store.indexService.BuildIndex(key, msgExt.CommitLogOffset, msgExt.StoreTimestamp.UnixMilli())
-		
+
 		// 同时添加到持久化管理器的消息索引
 		msgIndex := &MessageIndex{
 			MessageKey: key,
@@ -358,7 +358,7 @@ func (store *DefaultMessageStore) updateIndex(msgExt *common.MessageExt, result 
 		}
 		store.persistenceManager.AddMessageIndex(key, msgIndex)
 	}
-	
+
 	return nil
 }
 
@@ -379,13 +379,13 @@ func (store *DefaultMessageStore) updateConsumeQueue(msgExt *common.MessageExt, 
 	if cq == nil {
 		return fmt.Errorf("failed to get consume queue for topic %s, queueId %d", msgExt.Topic, msgExt.QueueId)
 	}
-	
+
 	// 计算Tag哈希码
 	tagsCode := int64(0)
 	if msgExt.Tags != "" {
 		tagsCode = int64(tagsString2tagsCode(msgExt.Tags))
 	}
-	
+
 	// 添加到ConsumeQueue
 	return cq.PutMessagePositionInfo(msgExt.CommitLogOffset, msgExt.StoreSize, tagsCode)
 }
@@ -393,26 +393,26 @@ func (store *DefaultMessageStore) updateConsumeQueue(msgExt *common.MessageExt, 
 // getOrCreateConsumeQueue 获取或创建ConsumeQueue
 func (store *DefaultMessageStore) getOrCreateConsumeQueue(topic string, queueId int32) *ConsumeQueue {
 	key := fmt.Sprintf("%s-%d", topic, queueId)
-	
+
 	store.mutex.RLock()
 	cq, exists := store.consumeQueueTable[key]
 	store.mutex.RUnlock()
-	
+
 	if exists {
 		return cq
 	}
-	
+
 	store.mutex.Lock()
 	defer store.mutex.Unlock()
-	
+
 	// 双重检查
 	if cq, exists = store.consumeQueueTable[key]; exists {
 		return cq
 	}
-	
+
 	// 创建新的ConsumeQueue
 	cq = NewConsumeQueue(topic, queueId, store.storeConfig.StorePathConsumeQueue, store.storeConfig.MapedFileSizeConsumeQueue)
-	
+
 	store.consumeQueueTable[key] = cq
 	return cq
 }
@@ -422,17 +422,17 @@ func (store *DefaultMessageStore) GetMessage(topic string, queueId int32, offset
 	if !store.running {
 		return nil, fmt.Errorf("message store is not running")
 	}
-	
+
 	// 检查ConsumeQueue是否存在（不自动创建）
 	store.mutex.RLock()
 	key := fmt.Sprintf("%s-%d", topic, queueId)
 	cq, exists := store.consumeQueueTable[key]
 	store.mutex.RUnlock()
-	
+
 	if !exists {
 		return nil, fmt.Errorf("topic %s with queueId %d not found", topic, queueId)
 	}
-	
+
 	var messages []*common.MessageExt
 	for i := int32(0); i < maxMsgNums; i++ {
 		// 从ConsumeQueue获取消息位置信息
@@ -440,16 +440,16 @@ func (store *DefaultMessageStore) GetMessage(topic string, queueId int32, offset
 		if err != nil {
 			break
 		}
-		
+
 		// 从CommitLog读取消息
 		msg, err := store.commitLog.GetMessage(position.Offset, position.Size)
 		if err != nil {
 			continue
 		}
-		
+
 		messages = append(messages, msg)
 	}
-	
+
 	return messages, nil
 }
 
@@ -545,7 +545,7 @@ func (store *DefaultMessageStore) QueryMessageByKey(topic, key string, maxNum in
 	if err != nil {
 		return nil, fmt.Errorf("failed to query offsets by key: %v", err)
 	}
-	
+
 	var messages []*common.MessageExt
 	for _, offset := range offsets {
 		// 从CommitLog读取消息，需要先获取消息大小
@@ -554,7 +554,7 @@ func (store *DefaultMessageStore) QueryMessageByKey(topic, key string, maxNum in
 		if err != nil {
 			continue // 跳过读取失败的消息
 		}
-		
+
 		// 验证消息是否匹配条件
 		if msg.Topic == topic && (msg.Keys == key || msg.GetProperty("UNIQ_KEY") == key) {
 			// 检查时间范围
@@ -562,12 +562,12 @@ func (store *DefaultMessageStore) QueryMessageByKey(topic, key string, maxNum in
 				messages = append(messages, msg)
 			}
 		}
-		
+
 		if int32(len(messages)) >= maxNum {
 			break
 		}
 	}
-	
+
 	return messages, nil
 }
 
@@ -575,26 +575,26 @@ func (store *DefaultMessageStore) QueryMessageByKey(topic, key string, maxNum in
 func (store *DefaultMessageStore) QueryMessageByTimeRange(topic string, startTime, endTime int64, maxNum int32) ([]*common.MessageExt, error) {
 	// 从持久化管理器查询消息索引
 	indexes := store.persistenceManager.QueryMessagesByTimeRange(startTime, endTime)
-	
+
 	var messages []*common.MessageExt
 	for _, index := range indexes {
 		// 过滤指定topic
 		if topic != "" && index.Topic != topic {
 			continue
 		}
-		
+
 		// 根据队列偏移量获取消息
 		msg, err := store.GetMessage(index.Topic, index.QueueId, index.Offset, 1)
 		if err != nil || len(msg) == 0 {
 			continue
 		}
-		
+
 		messages = append(messages, msg[0])
 		if int32(len(messages)) >= maxNum {
 			break
 		}
 	}
-	
+
 	return messages, nil
 }
 
@@ -605,7 +605,7 @@ func (store *DefaultMessageStore) QueryMessageTrace(msgId string) (*MessageTrace
 	if msgIndex == nil {
 		return nil, fmt.Errorf("message trace not found for msgId: %s", msgId)
 	}
-	
+
 	// 构建消息轨迹
 	trace := &MessageTrace{
 		MsgId:     msgId,
@@ -616,7 +616,7 @@ func (store *DefaultMessageStore) QueryMessageTrace(msgId string) (*MessageTrace
 		StoreTime: msgIndex.StoreTime,
 		Status:    "STORED",
 	}
-	
+
 	// 尝试获取完整消息信息
 	msg, err := store.GetMessage(msgIndex.Topic, msgIndex.QueueId, msgIndex.Offset, 1)
 	if err == nil && len(msg) > 0 {
@@ -624,7 +624,7 @@ func (store *DefaultMessageStore) QueryMessageTrace(msgId string) (*MessageTrace
 		trace.BodySize = int32(len(msg[0].Body))
 		trace.Properties = msg[0].Properties
 	}
-	
+
 	return trace, nil
 }
 
@@ -649,40 +649,40 @@ func (store *DefaultMessageStore) recoverConsumeQueues() error {
 		}
 		return fmt.Errorf("failed to read consume queue directory: %v", err)
 	}
-	
+
 	for _, topicDir := range topicDirs {
 		if !topicDir.IsDir() {
 			continue
 		}
-		
+
 		topicName := topicDir.Name()
 		topicPath := filepath.Join(consumeQueueDir, topicName)
-		
+
 		queueDirs, err := os.ReadDir(topicPath)
 		if err != nil {
 			continue
 		}
-		
+
 		for _, queueDir := range queueDirs {
 			if !queueDir.IsDir() {
 				continue
 			}
-			
+
 			// 解析queueId
 			queueId, err := strconv.ParseInt(queueDir.Name(), 10, 32)
 			if err != nil {
 				continue
 			}
-			
+
 			// 创建ConsumeQueue并恢复
 			cq := NewConsumeQueue(topicName, int32(queueId), store.storeConfig.StorePathConsumeQueue, store.storeConfig.MapedFileSizeConsumeQueue)
 			cq.Recover()
-			
+
 			// 添加到表中
 			key := fmt.Sprintf("%s-%d", topicName, queueId)
 			store.consumeQueueTable[key] = cq
 		}
 	}
-	
+
 	return nil
 }

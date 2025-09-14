@@ -14,13 +14,14 @@ import (
 	"sync"
 	"time"
 
+	common "github.com/chenjy16/go-rocketmq-common"
+	remoting "github.com/chenjy16/go-rocketmq-remoting"
+	"github.com/chenjy16/go-rocketmq-remoting/server"
+
 	"go-rocketmq/pkg/acl"
 	"go-rocketmq/pkg/cluster"
-	"go-rocketmq/pkg/common"
 	"go-rocketmq/pkg/failover"
 	"go-rocketmq/pkg/ha"
-	"go-rocketmq/pkg/remoting"
-	"go-rocketmq/pkg/remoting/server"
 	"go-rocketmq/pkg/store"
 )
 

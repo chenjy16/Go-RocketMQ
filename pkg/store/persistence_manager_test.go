@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"go-rocketmq/pkg/common"
+	common "github.com/chenjy16/go-rocketmq-common"
 )
 
 func TestPersistenceManager(t *testing.T) {

@@ -6,29 +6,29 @@ import (
 	"sync"
 	"time"
 
-	"go-rocketmq/pkg/common"
+	common "github.com/chenjy16/go-rocketmq-common"
 )
 
 // 延迟级别定义 (18级延迟队列)
 var DelayLevels = []time.Duration{
-	1 * time.Second,    // 1s
-	5 * time.Second,    // 5s
-	10 * time.Second,   // 10s
-	30 * time.Second,   // 30s
-	1 * time.Minute,    // 1m
-	2 * time.Minute,    // 2m
-	3 * time.Minute,    // 3m
-	4 * time.Minute,    // 4m
-	5 * time.Minute,    // 5m
-	6 * time.Minute,    // 6m
-	7 * time.Minute,    // 7m
-	8 * time.Minute,    // 8m
-	9 * time.Minute,    // 9m
-	10 * time.Minute,   // 10m
-	20 * time.Minute,   // 20m
-	30 * time.Minute,   // 30m
-	1 * time.Hour,      // 1h
-	2 * time.Hour,      // 2h
+	1 * time.Second,  // 1s
+	5 * time.Second,  // 5s
+	10 * time.Second, // 10s
+	30 * time.Second, // 30s
+	1 * time.Minute,  // 1m
+	2 * time.Minute,  // 2m
+	3 * time.Minute,  // 3m
+	4 * time.Minute,  // 4m
+	5 * time.Minute,  // 5m
+	6 * time.Minute,  // 6m
+	7 * time.Minute,  // 7m
+	8 * time.Minute,  // 8m
+	9 * time.Minute,  // 9m
+	10 * time.Minute, // 10m
+	20 * time.Minute, // 20m
+	30 * time.Minute, // 30m
+	1 * time.Hour,    // 1h
+	2 * time.Hour,    // 2h
 }
 
 const (
@@ -43,15 +43,15 @@ const (
 
 // DelayQueueService 延迟队列服务
 type DelayQueueService struct {
-	storeConfig    *StoreConfig
-	messageStore   *DefaultMessageStore
-	running        bool
-	mutex          sync.RWMutex
-	shutdown       chan struct{}
-	tickers        map[int32]*time.Ticker // 每个延迟级别对应一个定时器
-	tickerMutex    sync.RWMutex
-	offsetTable    map[int32]int64 // 每个延迟级别的消费进度
-	offsetMutex    sync.RWMutex
+	storeConfig  *StoreConfig
+	messageStore *DefaultMessageStore
+	running      bool
+	mutex        sync.RWMutex
+	shutdown     chan struct{}
+	tickers      map[int32]*time.Ticker // 每个延迟级别对应一个定时器
+	tickerMutex  sync.RWMutex
+	offsetTable  map[int32]int64 // 每个延迟级别的消费进度
+	offsetMutex  sync.RWMutex
 }
 
 // NewDelayQueueService 创建延迟队列服务
@@ -75,7 +75,7 @@ func (dqs *DelayQueueService) Start() error {
 	}
 
 	dqs.running = true
-	
+
 	// 启动后台goroutine来初始化
 	go func() {
 		// 等待一小段时间确保store完全启动
@@ -86,16 +86,16 @@ func (dqs *DelayQueueService) Start() error {
 			// 服务已关闭，退出
 			return
 		}
-		
+
 		// 检查服务是否仍在运行
 		dqs.mutex.RLock()
 		running := dqs.running
 		dqs.mutex.RUnlock()
-		
+
 		if !running {
 			return
 		}
-		
+
 		// 加载延迟消息消费进度
 		dqs.loadProgress()
 
@@ -111,7 +111,7 @@ func (dqs *DelayQueueService) Start() error {
 		}
 	}()
 
-return nil
+	return nil
 }
 
 // Shutdown 关闭延迟队列服务
@@ -279,8 +279,8 @@ func (dqs *DelayQueueService) deliverMessage(msg *common.MessageExt) error {
 
 	// 复制属性，但排除延迟相关属性
 	for k, v := range msg.Properties {
-		if k != PROPERTY_DELAY_TIME_LEVEL && k != PROPERTY_REAL_TOPIC && 
-		   k != PROPERTY_REAL_QUEUE_ID && k != PROPERTY_TIMER_DELIVER_MS {
+		if k != PROPERTY_DELAY_TIME_LEVEL && k != PROPERTY_REAL_TOPIC &&
+			k != PROPERTY_REAL_QUEUE_ID && k != PROPERTY_TIMER_DELIVER_MS {
 			newMsg.Properties[k] = v
 		}
 	}
@@ -305,12 +305,12 @@ func (dqs *DelayQueueService) loadProgress() {
 	// 简化实现，从每个延迟队列的最小偏移量开始
 	dqs.offsetMutex.Lock()
 	defer dqs.offsetMutex.Unlock()
-	
+
 	// 检查messageStore是否可用
 	if dqs.messageStore == nil {
 		return
 	}
-	
+
 	for i := 1; i <= len(DelayLevels); i++ {
 		// 使用默认偏移量0，避免在启动阶段调用可能导致死锁的方法
 		dqs.offsetTable[int32(i)] = 0
@@ -326,7 +326,7 @@ func (dqs *DelayQueueService) saveProgress() {
 		progressCopy[k] = v
 	}
 	dqs.offsetMutex.RUnlock()
-	
+
 	log.Printf("Saving delay queue progress: %v", progressCopy)
 }
 

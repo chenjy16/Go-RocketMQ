@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"go-rocketmq/pkg/common"
+	common "github.com/chenjy16/go-rocketmq-common"
 )
 
 func TestIndexComprehensive(t *testing.T) {
@@ -46,7 +46,7 @@ func TestIndexComprehensive(t *testing.T) {
 			Keys:  fmt.Sprintf("test-key-%d", i),
 			Body:  []byte(fmt.Sprintf("comprehensive test message %d", i)),
 			Properties: map[string]string{
-				"UNIQ_KEY": fmt.Sprintf("unique-key-%d", i),
+				"UNIQ_KEY":    fmt.Sprintf("unique-key-%d", i),
 				"custom-prop": fmt.Sprintf("value-%d", i),
 			},
 		}

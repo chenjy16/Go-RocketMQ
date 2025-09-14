@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"go-rocketmq/pkg/common"
+	common "github.com/chenjy16/go-rocketmq-common"
 )
 
 // BenchmarkBrokerPutMessage 基准测试消息发送性能
@@ -179,7 +179,7 @@ func BenchmarkBrokerConsumeOffset(b *testing.B) {
 			if err != nil {
 				b.Errorf("Failed to commit offset: %v", err)
 			}
-			
+
 			// 获取偏移量
 			retrievedOffset := broker.GetConsumeOffset("OffsetTopic", 0, "benchmarkGroup")
 			if retrievedOffset != offset {
@@ -224,13 +224,13 @@ func BenchmarkBrokerTransactionOperations(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		txId := fmt.Sprintf("txBenchmark%d", i)
-		
+
 		// 准备事务消息
 		_, err := broker.PrepareMessage(msg, "benchmarkProducerGroup", txId)
 		if err != nil {
 			b.Errorf("Failed to prepare transaction message: %v", err)
 		}
-		
+
 		// 提交事务
 		err = broker.CommitTransaction(txId)
 		if err != nil {

@@ -13,8 +13,9 @@ import (
 	"time"
 
 	"go-rocketmq/pkg/acl"
-	"go-rocketmq/pkg/common"
-	"go-rocketmq/pkg/remoting"
+
+	common "github.com/chenjy16/go-rocketmq-common"
+	remoting "github.com/chenjy16/go-rocketmq-remoting"
 )
 
 // NameServer NameServer服务器

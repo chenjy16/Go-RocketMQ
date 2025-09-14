@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"go-rocketmq/pkg/common"
+	common "github.com/chenjy16/go-rocketmq-common"
 )
 
 // TestCleanCommitLogService 测试CommitLog清理服务
@@ -20,13 +20,13 @@ func TestCleanCommitLogService(t *testing.T) {
 
 	// 创建存储配置
 	config := &StoreConfig{
-		StorePathRootDir:      tempDir,
-		StorePathCommitLog:    filepath.Join(tempDir, "commitlog"),
-		StorePathConsumeQueue: filepath.Join(tempDir, "consumequeue"),
-		StorePathIndex:        filepath.Join(tempDir, "index"),
+		StorePathRootDir:       tempDir,
+		StorePathCommitLog:     filepath.Join(tempDir, "commitlog"),
+		StorePathConsumeQueue:  filepath.Join(tempDir, "consumequeue"),
+		StorePathIndex:         filepath.Join(tempDir, "index"),
 		MapedFileSizeCommitLog: 1024 * 1024, // 1MB
-		FlushDiskType:         ASYNC_FLUSH,
-		FileReservedTime:      72, // 72小时
+		FlushDiskType:          ASYNC_FLUSH,
+		FileReservedTime:       72, // 72小时
 	}
 
 	// 创建CommitLog
@@ -78,13 +78,13 @@ func TestCleanCommitLogServiceDoClean(t *testing.T) {
 
 	// 创建存储配置
 	config := &StoreConfig{
-		StorePathRootDir:      tempDir,
-		StorePathCommitLog:    filepath.Join(tempDir, "commitlog"),
-		StorePathConsumeQueue: filepath.Join(tempDir, "consumequeue"),
-		StorePathIndex:        filepath.Join(tempDir, "index"),
+		StorePathRootDir:       tempDir,
+		StorePathCommitLog:     filepath.Join(tempDir, "commitlog"),
+		StorePathConsumeQueue:  filepath.Join(tempDir, "consumequeue"),
+		StorePathIndex:         filepath.Join(tempDir, "index"),
 		MapedFileSizeCommitLog: 1024 * 1024, // 1MB
-		FlushDiskType:         ASYNC_FLUSH,
-		FileReservedTime:      72, // 72小时
+		FlushDiskType:          ASYNC_FLUSH,
+		FileReservedTime:       72, // 72小时
 	}
 
 	// 创建CommitLog
@@ -120,14 +120,14 @@ func TestCleanConsumeQueueService(t *testing.T) {
 
 	// 创建存储配置
 	config := &StoreConfig{
-		StorePathRootDir:      tempDir,
-		StorePathCommitLog:    filepath.Join(tempDir, "commitlog"),
-		StorePathConsumeQueue: filepath.Join(tempDir, "consumequeue"),
-		StorePathIndex:        filepath.Join(tempDir, "index"),
-		MapedFileSizeCommitLog:   1024 * 1024, // 1MB
+		StorePathRootDir:          tempDir,
+		StorePathCommitLog:        filepath.Join(tempDir, "commitlog"),
+		StorePathConsumeQueue:     filepath.Join(tempDir, "consumequeue"),
+		StorePathIndex:            filepath.Join(tempDir, "index"),
+		MapedFileSizeCommitLog:    1024 * 1024, // 1MB
 		MapedFileSizeConsumeQueue: 300000 * 20, // 300万条记录
-		FlushDiskType:            ASYNC_FLUSH,
-		FileReservedTime:         72, // 72小时
+		FlushDiskType:             ASYNC_FLUSH,
+		FileReservedTime:          72, // 72小时
 	}
 
 	// 创建ConsumeQueue映射
@@ -181,14 +181,14 @@ func TestCleanConsumeQueueServiceDoClean(t *testing.T) {
 
 	// 创建存储配置
 	config := &StoreConfig{
-		StorePathRootDir:      tempDir,
-		StorePathCommitLog:    filepath.Join(tempDir, "commitlog"),
-		StorePathConsumeQueue: filepath.Join(tempDir, "consumequeue"),
-		StorePathIndex:        filepath.Join(tempDir, "index"),
-		MapedFileSizeCommitLog:   1024 * 1024, // 1MB
+		StorePathRootDir:          tempDir,
+		StorePathCommitLog:        filepath.Join(tempDir, "commitlog"),
+		StorePathConsumeQueue:     filepath.Join(tempDir, "consumequeue"),
+		StorePathIndex:            filepath.Join(tempDir, "index"),
+		MapedFileSizeCommitLog:    1024 * 1024, // 1MB
 		MapedFileSizeConsumeQueue: 300000 * 20, // 300万条记录
-		FlushDiskType:            ASYNC_FLUSH,
-		FileReservedTime:         72, // 72小时
+		FlushDiskType:             ASYNC_FLUSH,
+		FileReservedTime:          72, // 72小时
 	}
 
 	// 创建ConsumeQueue映射
@@ -228,13 +228,13 @@ func TestCleanServiceIntegration(t *testing.T) {
 
 	// 创建存储配置
 	config := &StoreConfig{
-		StorePathRootDir:      tempDir,
-		StorePathCommitLog:    filepath.Join(tempDir, "commitlog"),
-		StorePathConsumeQueue: filepath.Join(tempDir, "consumequeue"),
-		StorePathIndex:        filepath.Join(tempDir, "index"),
+		StorePathRootDir:       tempDir,
+		StorePathCommitLog:     filepath.Join(tempDir, "commitlog"),
+		StorePathConsumeQueue:  filepath.Join(tempDir, "consumequeue"),
+		StorePathIndex:         filepath.Join(tempDir, "index"),
 		MapedFileSizeCommitLog: 1024 * 1024, // 1MB
-		FlushDiskType:         ASYNC_FLUSH,
-		FileReservedTime:      1, // 1小时（用于测试）
+		FlushDiskType:          ASYNC_FLUSH,
+		FileReservedTime:       1, // 1小时（用于测试）
 	}
 
 	// 创建消息存储
@@ -293,12 +293,12 @@ func TestCleanServiceConcurrency(t *testing.T) {
 
 	// 创建存储配置
 	config := &StoreConfig{
-		StorePathRootDir:      tempDir,
-		StorePathCommitLog:    filepath.Join(tempDir, "commitlog"),
-		StorePathConsumeQueue: filepath.Join(tempDir, "consumequeue"),
-		StorePathIndex:        filepath.Join(tempDir, "index"),
+		StorePathRootDir:       tempDir,
+		StorePathCommitLog:     filepath.Join(tempDir, "commitlog"),
+		StorePathConsumeQueue:  filepath.Join(tempDir, "consumequeue"),
+		StorePathIndex:         filepath.Join(tempDir, "index"),
 		MapedFileSizeCommitLog: 1024 * 1024, // 1MB
-		FlushDiskType:         ASYNC_FLUSH,
+		FlushDiskType:          ASYNC_FLUSH,
 	}
 
 	// 创建CommitLog

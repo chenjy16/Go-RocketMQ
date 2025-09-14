@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"go-rocketmq/pkg/common"
+	common "github.com/chenjy16/go-rocketmq-common"
 )
 
 func TestStorePersistenceIntegration(t *testing.T) {
@@ -18,21 +18,21 @@ func TestStorePersistenceIntegration(t *testing.T) {
 
 	// 创建存储配置
 	config := &StoreConfig{
-		StorePathRootDir:      tempDir,
-		StorePathCommitLog:    tempDir + "/commitlog",
-		StorePathConsumeQueue: tempDir + "/consumequeue",
-		StorePathIndex:        tempDir + "/index",
-		MapedFileSizeCommitLog:   1024 * 1024 * 10, // 10MB
-		MapedFileSizeConsumeQueue: 1024 * 1024,     // 1MB
-		MapedFileSizeIndexFile:   1024 * 1024,     // 1MB
-		FlushDiskType:            ASYNC_FLUSH,
-		FlushIntervalCommitLog:   1000,
-		FlushCommitLogLeastPages: 4,
+		StorePathRootDir:            tempDir,
+		StorePathCommitLog:          tempDir + "/commitlog",
+		StorePathConsumeQueue:       tempDir + "/consumequeue",
+		StorePathIndex:              tempDir + "/index",
+		MapedFileSizeCommitLog:      1024 * 1024 * 10, // 10MB
+		MapedFileSizeConsumeQueue:   1024 * 1024,      // 1MB
+		MapedFileSizeIndexFile:      1024 * 1024,      // 1MB
+		FlushDiskType:               ASYNC_FLUSH,
+		FlushIntervalCommitLog:      1000,
+		FlushCommitLogLeastPages:    4,
 		FlushConsumeQueueLeastPages: 2,
 		FlushIntervalConsumeQueue:   1000,
-		FileReservedTime:         72,
-		DeleteWhen:               "04",
-		DiskMaxUsedSpaceRatio:    75,
+		FileReservedTime:            72,
+		DeleteWhen:                  "04",
+		DiskMaxUsedSpaceRatio:       75,
 	}
 
 	// 创建消息存储
@@ -194,21 +194,21 @@ func TestStorePersistenceRestart(t *testing.T) {
 
 	// 创建存储配置
 	config := &StoreConfig{
-		StorePathRootDir:      tempDir,
-		StorePathCommitLog:    tempDir + "/commitlog",
-		StorePathConsumeQueue: tempDir + "/consumequeue",
-		StorePathIndex:        tempDir + "/index",
-		MapedFileSizeCommitLog:   1024 * 1024 * 10, // 10MB
-		MapedFileSizeConsumeQueue: 1024 * 1024,     // 1MB
-		MapedFileSizeIndexFile:   1024 * 1024,     // 1MB
-		FlushDiskType:            ASYNC_FLUSH,
-		FlushIntervalCommitLog:   1000,
-		FlushCommitLogLeastPages: 4,
+		StorePathRootDir:            tempDir,
+		StorePathCommitLog:          tempDir + "/commitlog",
+		StorePathConsumeQueue:       tempDir + "/consumequeue",
+		StorePathIndex:              tempDir + "/index",
+		MapedFileSizeCommitLog:      1024 * 1024 * 10, // 10MB
+		MapedFileSizeConsumeQueue:   1024 * 1024,      // 1MB
+		MapedFileSizeIndexFile:      1024 * 1024,      // 1MB
+		FlushDiskType:               ASYNC_FLUSH,
+		FlushIntervalCommitLog:      1000,
+		FlushCommitLogLeastPages:    4,
 		FlushConsumeQueueLeastPages: 2,
 		FlushIntervalConsumeQueue:   1000,
-		FileReservedTime:         72,
-		DeleteWhen:               "04",
-		DiskMaxUsedSpaceRatio:    75,
+		FileReservedTime:            72,
+		DeleteWhen:                  "04",
+		DiskMaxUsedSpaceRatio:       75,
 	}
 
 	// 第一次启动：创建数据

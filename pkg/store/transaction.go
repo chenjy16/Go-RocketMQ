@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"go-rocketmq/pkg/common"
+	common "github.com/chenjy16/go-rocketmq-common"
 )
 
 // 事务消息相关常量
@@ -67,16 +67,16 @@ type TransactionRecord struct {
 
 // TransactionService 事务消息服务
 type TransactionService struct {
-	storeConfig     *StoreConfig
-	messageStore    *DefaultMessageStore
-	running         bool
-	mutex           sync.RWMutex
-	shutdown        chan struct{}
-	transactionMap  map[string]*TransactionRecord // transactionId -> TransactionRecord
+	storeConfig      *StoreConfig
+	messageStore     *DefaultMessageStore
+	running          bool
+	mutex            sync.RWMutex
+	shutdown         chan struct{}
+	transactionMap   map[string]*TransactionRecord // transactionId -> TransactionRecord
 	transactionMutex sync.RWMutex
-	checkTimer      *time.Timer
-	listeners       map[string]TransactionListener // producerGroup -> TransactionListener
-	listenerMutex   sync.RWMutex
+	checkTimer       *time.Timer
+	listeners        map[string]TransactionListener // producerGroup -> TransactionListener
+	listenerMutex    sync.RWMutex
 	// 持久化管理器
 	persistenceManager *PersistenceManager
 }
@@ -181,11 +181,11 @@ func (ts *TransactionService) PrepareMessage(msg *common.Message, producerGroup 
 		UpdateTime:    time.Now(),
 		CheckCount:    0,
 	}
-	
+
 	ts.transactionMutex.Lock()
 	ts.transactionMap[transactionId] = record
 	ts.transactionMutex.Unlock()
-	
+
 	// 保存到持久化管理器
 	ts.saveTransactionStateToPersistence(record)
 
@@ -274,14 +274,14 @@ func (ts *TransactionService) startTransactionCheckTimer() {
 // checkTransactions 检查超时的事务
 func (ts *TransactionService) checkTransactions() {
 	now := time.Now()
-	checkTimeout := 60 * time.Second // 60秒超时
-	maxCheckCount := int32(15)       // 最大检查次数
+	checkTimeout := 60 * time.Second     // 60秒超时
+	maxCheckCount := int32(15)           // 最大检查次数
 	transactionTimeout := 24 * time.Hour // 24小时事务超时
 
 	ts.transactionMutex.RLock()
 	var needCheckTransactions []*TransactionRecord
 	var expiredTransactions []string
-	
+
 	for transactionId, record := range ts.transactionMap {
 		if record.State == TransactionStateUnknown {
 			// 检查是否超过最大生存时间，如果是则强制回滚
@@ -304,7 +304,7 @@ func (ts *TransactionService) checkTransactions() {
 	for _, record := range needCheckTransactions {
 		go ts.checkTransaction(record)
 	}
-	
+
 	// 处理过期事务（强制回滚）
 	for _, transactionId := range expiredTransactions {
 		go func(txId string) {
@@ -383,7 +383,7 @@ func (ts *TransactionService) getHalfMessage(msgId string) (*common.MessageExt, 
 		}
 	}
 	ts.transactionMutex.RUnlock()
-	
+
 	if record == nil {
 		return nil, fmt.Errorf("half message not found: %s", msgId)
 	}
@@ -397,7 +397,7 @@ func (ts *TransactionService) getHalfMessage(msgId string) (*common.MessageExt, 
 		log.Printf("Warning: Could not find half message in CommitLog for %s, reconstructing from transaction record: %v", msgId, err)
 		return ts.reconstructHalfMessage(msgId, record), nil
 	}
-	
+
 	return halfMsg, nil
 }
 
@@ -408,11 +408,11 @@ func (ts *TransactionService) searchHalfMessageInCommitLog(msgId string, record 
 	if commitLog == nil {
 		return nil, fmt.Errorf("commit log not available")
 	}
-	
+
 	// 获取CommitLog的最小和最大偏移量
 	minOffset := commitLog.GetMinOffset()
 	maxOffset := commitLog.GetMaxOffset()
-	
+
 	// 分批扫描CommitLog查找匹配的事务消息
 	batchSize := int64(1024 * 1024) // 1MB批次
 	for offset := minOffset; offset < maxOffset; offset += batchSize {
@@ -420,20 +420,20 @@ func (ts *TransactionService) searchHalfMessageInCommitLog(msgId string, record 
 		if endOffset > maxOffset {
 			endOffset = maxOffset
 		}
-		
+
 		// 读取数据块
 		data, err := commitLog.GetData(offset, int32(endOffset-offset))
 		if err != nil {
 			continue
 		}
-		
+
 		// 在数据块中搜索匹配的消息
 		msg := ts.searchMessageInDataBlock(data, msgId, record)
 		if msg != nil {
 			return msg, nil
 		}
 	}
-	
+
 	return nil, fmt.Errorf("half message not found in commit log")
 }
 
@@ -441,19 +441,19 @@ func (ts *TransactionService) searchHalfMessageInCommitLog(msgId string, record 
 func (ts *TransactionService) searchMessageInDataBlock(data []byte, msgId string, record *TransactionRecord) *common.MessageExt {
 	// 简化实现：这里应该解析CommitLog的消息格式
 	// 由于CommitLog格式复杂，这里使用基于属性的匹配
-	
+
 	// 检查数据块中是否包含事务ID
 	transactionIdBytes := []byte(record.TransactionId)
 	if !ts.containsBytes(data, transactionIdBytes) {
 		return nil
 	}
-	
+
 	// 检查是否包含半消息Topic
 	halfTopicBytes := []byte(RMQ_SYS_TRANS_HALF_TOPIC)
 	if !ts.containsBytes(data, halfTopicBytes) {
 		return nil
 	}
-	
+
 	// 如果找到匹配的模式，重建消息
 	return ts.reconstructHalfMessage(msgId, record)
 }
@@ -466,7 +466,7 @@ func (ts *TransactionService) containsBytes(data, pattern []byte) bool {
 	if len(data) < len(pattern) {
 		return false
 	}
-	
+
 	for i := 0; i <= len(data)-len(pattern); i++ {
 		match := true
 		for j := 0; j < len(pattern); j++ {
@@ -490,12 +490,12 @@ func (ts *TransactionService) reconstructHalfMessage(msgId string, record *Trans
 			Topic: RMQ_SYS_TRANS_HALF_TOPIC,
 			Body:  []byte(fmt.Sprintf("reconstructed half message for transaction %s", record.TransactionId)),
 			Properties: map[string]string{
-				PROPERTY_REAL_TOPIC:     record.RealTopic,
-				PROPERTY_REAL_QUEUE_ID:  fmt.Sprintf("%d", record.RealQueueId),
-				PROPERTY_TRANSACTION_ID: record.TransactionId,
-				PROPERTY_PRODUCER_GROUP: record.ProducerGroup,
+				PROPERTY_REAL_TOPIC:       record.RealTopic,
+				PROPERTY_REAL_QUEUE_ID:    fmt.Sprintf("%d", record.RealQueueId),
+				PROPERTY_TRANSACTION_ID:   record.TransactionId,
+				PROPERTY_PRODUCER_GROUP:   record.ProducerGroup,
 				PROPERTY_UNIQUE_CLIENT_ID: record.ClientId,
-				"RECONSTRUCTED": "true", // 标记这是重建的消息
+				"RECONSTRUCTED":           "true", // 标记这是重建的消息
 			},
 		},
 		MsgId:           msgId,
@@ -508,7 +508,7 @@ func (ts *TransactionService) reconstructHalfMessage(msgId string, record *Trans
 		BornHost:        "127.0.0.1:0",
 		StoreHost:       "127.0.0.1:10911",
 	}
-	
+
 	log.Printf("Reconstructed half message for transaction %s from record", record.TransactionId)
 	return halfMsg
 }
@@ -535,8 +535,8 @@ func (ts *TransactionService) deliverRealMessage(halfMsg *common.MessageExt) err
 	// 复制属性，但排除事务相关属性
 	for k, v := range halfMsg.Properties {
 		if k != PROPERTY_TRANSACTION_PREPARED && k != PROPERTY_PRODUCER_GROUP &&
-		   k != PROPERTY_TRANSACTION_ID && k != PROPERTY_REAL_TOPIC &&
-		   k != PROPERTY_REAL_QUEUE_ID && k != PROPERTY_UNIQUE_CLIENT_ID {
+			k != PROPERTY_TRANSACTION_ID && k != PROPERTY_REAL_TOPIC &&
+			k != PROPERTY_REAL_QUEUE_ID && k != PROPERTY_UNIQUE_CLIENT_ID {
 			newMsg.Properties[k] = v
 		}
 	}
@@ -595,14 +595,14 @@ func (ts *TransactionService) loadTransactionStatesFromPersistence() {
 		log.Printf("PersistenceManager is nil, cannot load transaction states")
 		return
 	}
-	
+
 	allStates := ts.persistenceManager.GetAllTransactionStates()
 	log.Printf("Retrieved %d transaction states from persistence manager", len(allStates))
 	ts.transactionMutex.Lock()
 	defer ts.transactionMutex.Unlock()
-	
+
 	loadedCount := 0
-	
+
 	for transactionId, persistentState := range allStates {
 		log.Printf("Processing transaction %s with state %v", transactionId, persistentState.State)
 		// 只加载未完成的事务（UNKNOWN状态）
@@ -619,7 +619,7 @@ func (ts *TransactionService) loadTransactionStatesFromPersistence() {
 				UpdateTime:    time.Unix(persistentState.UpdateTime, 0),
 				CheckCount:    0, // 重置检查次数
 			}
-			
+
 			ts.transactionMap[transactionId] = record
 			loadedCount++
 			log.Printf("Loaded transaction %s into memory", transactionId)
@@ -627,7 +627,7 @@ func (ts *TransactionService) loadTransactionStatesFromPersistence() {
 			log.Printf("Skipping transaction %s with state %v (not UNKNOWN)", transactionId, persistentState.State)
 		}
 	}
-	
+
 	log.Printf("Loaded %d transaction states from persistence", loadedCount)
 }
 
@@ -636,7 +636,7 @@ func (ts *TransactionService) saveTransactionStateToPersistence(record *Transact
 	if ts.persistenceManager == nil {
 		return
 	}
-	
+
 	persistentState := &PersistentTransactionState{
 		TransactionId: record.TransactionId,
 		ProducerGroup: record.ProducerGroup,
@@ -651,7 +651,7 @@ func (ts *TransactionService) saveTransactionStateToPersistence(record *Transact
 			},
 		},
 	}
-	
+
 	ts.persistenceManager.UpdateTransactionState(record.TransactionId, persistentState)
 }
 
@@ -660,6 +660,6 @@ func (ts *TransactionService) removeTransactionStateFromPersistence(transactionI
 	if ts.persistenceManager == nil {
 		return
 	}
-	
+
 	ts.persistenceManager.RemoveTransactionState(transactionId)
 }

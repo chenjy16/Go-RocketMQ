@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"go-rocketmq/pkg/common"
+	common "github.com/chenjy16/go-rocketmq-common"
 )
 
 // TestBrokerNetworkHandling 测试网络连接处理
@@ -17,7 +17,7 @@ func TestBrokerNetworkHandling(t *testing.T) {
 	config.EnableCluster = false
 	config.EnableFailover = false
 	config.AclEnable = false
-	
+
 	broker := NewBroker(config)
 	if err := broker.Start(); err != nil {
 		t.Fatalf("Failed to start broker: %v", err)
