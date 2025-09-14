@@ -1,0 +1,6 @@
+[submodule "pkg/common"]
+	path = pkg/common
+	url = https://github.com/chenjy16/go-rocketmq-common.git
+[submodule "pkg/remoting"]
+	path = pkg/remoting
+	url = https://github.com/chenjy16/go-rocketmq-remoting.git
