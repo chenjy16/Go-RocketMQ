@@ -1167,4 +1167,15 @@ For detailed testing information, see the test files in the respective package d
 
 This project is licensed under the Apache License 2.0. See the [LICENSE](LICENSE) file for details.
 
+## Getting Help
+
+For help with using Go-RocketMQ, please refer to the following resources:
+
+- [Submodule Guide](README-SUBMODULES.md) for Git submodule management
+- [Performance Optimization Guide](docs/PERFORMANCE_OPTIMIZATION.md) for performance tuning
+- [Client Usage Guide (Chinese)](docs/CLIENT_USAGE.md) for client library usage
+- [Client Usage Guide (English)](docs/CLIENT_USAGE_EN.md) for client library usage
+- Submit [Issues](https://github.com/chenjy16/Go-RocketMQ/issues) for bug reports and feature requests
+- Participate in [Discussions](https://github.com/chenjy16/Go-RocketMQ/discussions) for general questions and community support
+
 ---
