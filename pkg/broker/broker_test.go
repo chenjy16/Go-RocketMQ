@@ -193,9 +193,9 @@ func TestBrokerStartStop(t *testing.T) {
 		t.Fatalf("Failed to start broker: %v", err)
 	}
 
-	// 验证监听器已创建
-	if broker.listener == nil {
-		t.Error("Listener should be created after start")
+	// 验证监听器已创建 - 检查remotingServer而不是listener
+	if broker.remotingServer == nil {
+		t.Error("Remoting server should be created after start")
 	}
 
 	// 等待一小段时间确保服务启动

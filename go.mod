@@ -12,3 +12,7 @@ require (
 // These dependencies are managed as Git submodules.
 // The github.com/chenjy16/go-rocketmq-common and github.com/chenjy16/go-rocketmq-remoting
 // modules are integrated as submodules in the pkg/common and pkg/remoting directories.
+
+replace github.com/chenjy16/go-rocketmq-remoting => ./pkg/remoting
+
+replace github.com/chenjy16/go-rocketmq-common => ./pkg/common

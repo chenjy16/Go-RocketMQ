@@ -16,7 +16,8 @@ import (
 
 	common "github.com/chenjy16/go-rocketmq-common"
 	remoting "github.com/chenjy16/go-rocketmq-remoting"
-	"github.com/chenjy16/go-rocketmq-remoting/server"
+	"github.com/chenjy16/go-rocketmq-remoting/command"
+	"github.com/chenjy16/go-rocketmq-remoting/heartbeat"
 
 	"go-rocketmq/pkg/acl"
 	"go-rocketmq/pkg/cluster"
@@ -199,71 +200,71 @@ func NewBroker(config *Config) *Broker {
 func (b *Broker) registerProtocolProcessors() {
 	// 注册发送消息处理器
 	sendMessageProcessor := &SendMessageProcessor{broker: b}
-	b.remotingServer.RegisterProcessor(server.RequestCode(remoting.SendMessage), sendMessageProcessor)
+	b.remotingServer.RegisterProcessor(remoting.SendMessage, sendMessageProcessor)
 
 	// 注册发送消息V2处理器
 	sendMessageV2Processor := &SendMessageV2Processor{broker: b}
-	b.remotingServer.RegisterProcessor(server.RequestCode(remoting.SendMessageV2), sendMessageV2Processor)
+	b.remotingServer.RegisterProcessor(remoting.SendMessageV2, sendMessageV2Processor)
 
 	// 注册发送批量消息处理器
 	sendBatchMessageProcessor := &SendBatchMessageProcessor{broker: b}
-	b.remotingServer.RegisterProcessor(server.RequestCode(remoting.SendBatchMessage), sendBatchMessageProcessor)
+	b.remotingServer.RegisterProcessor(remoting.SendBatchMessage, sendBatchMessageProcessor)
 
 	// 注册拉取消息处理器
 	pullMessageProcessor := &PullMessageProcessor{broker: b}
-	b.remotingServer.RegisterProcessor(server.RequestCode(remoting.PullMessage), pullMessageProcessor)
+	b.remotingServer.RegisterProcessor(remoting.PullMessage, pullMessageProcessor)
 
 	// 注册查询消息处理器
 	queryMessageProcessor := &QueryMessageProcessor{broker: b}
-	b.remotingServer.RegisterProcessor(server.RequestCode(remoting.QueryMessage), queryMessageProcessor)
+	b.remotingServer.RegisterProcessor(remoting.QueryMessage, queryMessageProcessor)
 
 	// 注册根据Key查询消息处理器
 	queryMessageByKeyProcessor := &QueryMessageByKeyProcessor{broker: b}
-	b.remotingServer.RegisterProcessor(server.RequestCode(remoting.QueryMessageByKey), queryMessageByKeyProcessor)
+	b.remotingServer.RegisterProcessor(remoting.QueryMessageByKey, queryMessageByKeyProcessor)
 
 	// 注册查询路由信息处理器
 	queryRouteProcessor := &QueryRouteProcessor{broker: b}
-	b.remotingServer.RegisterProcessor(server.RequestCode(remoting.GetRouteInfoByTopic), queryRouteProcessor)
+	b.remotingServer.RegisterProcessor(remoting.GetRouteInfoByTopic, queryRouteProcessor)
 
 	// 注册创建/更新Topic处理器
 	updateAndCreateTopicProcessor := &UpdateAndCreateTopicProcessor{broker: b}
-	b.remotingServer.RegisterProcessor(server.RequestCode(remoting.UpdateAndCreateTopic), updateAndCreateTopicProcessor)
+	b.remotingServer.RegisterProcessor(remoting.UpdateAndCreateTopic, updateAndCreateTopicProcessor)
 
 	// 注册获取Broker集群信息处理器
 	getBrokerClusterInfoProcessor := &GetBrokerClusterInfoProcessor{broker: b}
-	b.remotingServer.RegisterProcessor(server.RequestCode(remoting.GetBrokerClusterInfo), getBrokerClusterInfoProcessor)
+	b.remotingServer.RegisterProcessor(remoting.GetBrokerClusterInfo, getBrokerClusterInfoProcessor)
 
 	// 注册Broker注册处理器
 	registerBrokerProcessor := &RegisterBrokerProcessor{broker: b}
-	b.remotingServer.RegisterProcessor(server.RequestCode(remoting.RegisterBroker), registerBrokerProcessor)
+	b.remotingServer.RegisterProcessor(remoting.RegisterBroker, registerBrokerProcessor)
 
 	// 注册Broker注销处理器
 	unregisterBrokerProcessor := &UnregisterBrokerProcessor{broker: b}
-	b.remotingServer.RegisterProcessor(server.RequestCode(remoting.UnregisterBroker), unregisterBrokerProcessor)
+	b.remotingServer.RegisterProcessor(remoting.UnregisterBroker, unregisterBrokerProcessor)
 
 	// 注册心跳处理器
-	heartbeatProcessor := &HeartbeatProcessor{broker: b}
-	b.remotingServer.RegisterProcessor(server.RequestCode(31), heartbeatProcessor) // HEART_BEAT
+	heartbeatProcessor := &HeartbeatProcessor{heartbeatProcessor: heartbeat.NewHeartbeatProcessor()}
+	b.remotingServer.RegisterProcessor(remoting.HeartBeat, heartbeatProcessor)
 
 	// 注册更新消费者偏移量处理器
 	updateConsumerOffsetProcessor := &UpdateConsumerOffsetProcessor{broker: b}
-	b.remotingServer.RegisterProcessor(server.RequestCode(34), updateConsumerOffsetProcessor) // UPDATE_CONSUMER_OFFSET
+	b.remotingServer.RegisterProcessor(remoting.UpdateConsumerOffset, updateConsumerOffsetProcessor)
 
 	// 注册结束事务处理器
 	endTransactionProcessor := &EndTransactionProcessor{broker: b}
-	b.remotingServer.RegisterProcessor(server.RequestCode(remoting.EndTransaction), endTransactionProcessor)
+	b.remotingServer.RegisterProcessor(remoting.EndTransaction, endTransactionProcessor)
 
 	// 注册检查事务状态处理器
 	checkTransactionStateProcessor := &CheckTransactionStateProcessor{broker: b}
-	b.remotingServer.RegisterProcessor(server.RequestCode(remoting.CheckTransactionState), checkTransactionStateProcessor)
+	b.remotingServer.RegisterProcessor(remoting.CheckTransactionState, checkTransactionStateProcessor)
 
 	// 注册更新Broker配置处理器
 	updateBrokerConfigProcessor := &UpdateBrokerConfigProcessor{broker: b}
-	b.remotingServer.RegisterProcessor(server.RequestCode(remoting.UpdateBrokerConfig), updateBrokerConfigProcessor)
+	b.remotingServer.RegisterProcessor(remoting.UpdateBrokerConfig, updateBrokerConfigProcessor)
 
 	// 注册获取Broker配置处理器
 	getBrokerConfigProcessor := &GetBrokerConfigProcessor{broker: b}
-	b.remotingServer.RegisterProcessor(server.RequestCode(remoting.GetBrokerConfig), getBrokerConfigProcessor)
+	b.remotingServer.RegisterProcessor(remoting.GetBrokerConfig, getBrokerConfigProcessor)
 
 	log.Printf("Registered protocol processors for broker")
 }
@@ -768,7 +769,7 @@ func DefaultBrokerConfig() *Config {
 }
 
 // parseRequestHeader 解析请求头
-func parseRequestHeader(request *server.RemotingCommand, header interface{}) error {
+func parseRequestHeader(request *remoting.RemotingCommand, header interface{}) error {
 	if request.ExtFields != nil {
 		headerData, _ := json.Marshal(request.ExtFields)
 		if err := json.Unmarshal(headerData, header); err != nil {
@@ -784,7 +785,7 @@ type SendMessageProcessor struct {
 }
 
 // ProcessRequest 处理发送消息请求
-func (p *SendMessageProcessor) ProcessRequest(ctx context.Context, request *server.RemotingCommand, conn *server.ServerConnection) (*server.RemotingCommand, error) {
+func (p *SendMessageProcessor) ProcessRequest(ctx context.Context, request *remoting.RemotingCommand, conn *remoting.ServerConnection) (*remoting.RemotingCommand, error) {
 	// ACL权限验证
 	if p.broker.aclMiddleware != nil && p.broker.aclMiddleware.IsAclEnabled() {
 		// 构造请求数据用于验证
@@ -800,7 +801,7 @@ func (p *SendMessageProcessor) ProcessRequest(ctx context.Context, request *serv
 		_, err := p.broker.aclMiddleware.ValidateProducerRequest(requestData, request.ExtFields["topic"], conn.GetRemoteAddr())
 		if err != nil {
 			log.Printf("ACL validation failed for producer: %v", err)
-			return server.CreateResponseCommand(server.ResponseCode(1), fmt.Sprintf("Access denied: %v", err)), nil
+			return remoting.CreateResponseCommand(remoting.SystemError, fmt.Sprintf("Access denied: %v", err)), nil
 		}
 	}
 
@@ -809,7 +810,7 @@ func (p *SendMessageProcessor) ProcessRequest(ctx context.Context, request *serv
 	if request.ExtFields != nil {
 		headerData, _ := json.Marshal(request.ExtFields)
 		if err := json.Unmarshal(headerData, &header); err != nil {
-			return server.CreateResponseCommand(server.SystemError, fmt.Sprintf("Failed to parse send message header: %v", err)), nil
+			return remoting.CreateResponseCommand(remoting.SystemError, fmt.Sprintf("Failed to parse send message header: %v", err)), nil
 		}
 	}
 
@@ -830,7 +831,7 @@ func (p *SendMessageProcessor) ProcessRequest(ctx context.Context, request *serv
 	// 存储消息
 	result, err := p.broker.PutMessage(msg)
 	if err != nil {
-		return server.CreateResponseCommand(server.SystemError, fmt.Sprintf("Failed to store message: %v", err)), nil
+		return remoting.CreateResponseCommand(remoting.SystemError, fmt.Sprintf("Failed to store message: %v", err)), nil
 	}
 
 	// 创建响应
@@ -845,7 +846,7 @@ func (p *SendMessageProcessor) ProcessRequest(ctx context.Context, request *serv
 	headerData, _ := json.Marshal(responseHeader)
 	json.Unmarshal(headerData, &extFields)
 
-	response := server.CreateResponseCommand(server.Success, "")
+	response := remoting.CreateResponseCommand(remoting.Success, "")
 	response.Opaque = request.Opaque
 	response.ExtFields = extFields
 
@@ -858,20 +859,20 @@ type PullMessageProcessor struct {
 }
 
 // ProcessRequest 处理拉取消息请求
-func (p *PullMessageProcessor) ProcessRequest(ctx context.Context, request *server.RemotingCommand, conn *server.ServerConnection) (*server.RemotingCommand, error) {
+func (p *PullMessageProcessor) ProcessRequest(ctx context.Context, request *remoting.RemotingCommand, conn *remoting.ServerConnection) (*remoting.RemotingCommand, error) {
 	// 解析请求头
 	var header remoting.PullMessageRequestHeader
 	if request.ExtFields != nil {
 		headerData, _ := json.Marshal(request.ExtFields)
 		if err := json.Unmarshal(headerData, &header); err != nil {
-			return server.CreateResponseCommand(server.SystemError, fmt.Sprintf("Failed to parse pull message header: %v", err)), nil
+			return remoting.CreateResponseCommand(remoting.SystemError, fmt.Sprintf("Failed to parse pull message header: %v", err)), nil
 		}
 	}
 
 	// 拉取消息
 	messages, err := p.broker.PullMessage(header.Topic, header.QueueId, header.QueueOffset, header.MaxMsgNums)
 	if err != nil {
-		return server.CreateResponseCommand(server.SystemError, fmt.Sprintf("Failed to pull message: %v", err)), nil
+		return remoting.CreateResponseCommand(remoting.SystemError, fmt.Sprintf("Failed to pull message: %v", err)), nil
 	}
 
 	// 创建响应
@@ -893,7 +894,7 @@ func (p *PullMessageProcessor) ProcessRequest(ctx context.Context, request *serv
 		responseBody, _ = json.Marshal(messages)
 	}
 
-	response := server.CreateResponseCommand(server.Success, "")
+	response := remoting.CreateResponseCommand(remoting.Success, "")
 	response.Opaque = request.Opaque
 	response.ExtFields = extFields
 	response.Body = responseBody
@@ -907,10 +908,10 @@ type QueryRouteProcessor struct {
 }
 
 // ProcessRequest 处理路由查询请求
-func (p *QueryRouteProcessor) ProcessRequest(ctx context.Context, request *server.RemotingCommand, conn *server.ServerConnection) (*server.RemotingCommand, error) {
+func (p *QueryRouteProcessor) ProcessRequest(ctx context.Context, request *remoting.RemotingCommand, conn *remoting.ServerConnection) (*remoting.RemotingCommand, error) {
 	topic := request.ExtFields["topic"]
 	if topic == "" {
-		return server.CreateResponseCommand(server.SystemError, "topic is required for route query"), nil
+		return remoting.CreateResponseCommand(remoting.SystemError, "topic is required for route query"), nil
 	}
 
 	// 构造路由数据
@@ -936,34 +937,65 @@ func (p *QueryRouteProcessor) ProcessRequest(ctx context.Context, request *serve
 
 	data, err := json.Marshal(routeData)
 	if err != nil {
-		return server.CreateResponseCommand(server.SystemError, fmt.Sprintf("failed to marshal route data: %v", err)), nil
+		return remoting.CreateResponseCommand(remoting.SystemError, fmt.Sprintf("failed to marshal route data: %v", err)), nil
 	}
 
-	response := server.CreateResponseCommand(server.Success, "")
+	response := remoting.CreateResponseCommand(remoting.Success, "")
 	response.Body = data
 	return response, nil
 }
 
 // HeartbeatProcessor 心跳处理器
 type HeartbeatProcessor struct {
-	broker *Broker
+	heartbeatProcessor *heartbeat.HeartbeatProcessor
 }
 
 // ProcessRequest 处理心跳请求
-func (p *HeartbeatProcessor) ProcessRequest(ctx context.Context, request *server.RemotingCommand, conn *server.ServerConnection) (*server.RemotingCommand, error) {
-	// 解析心跳数据
-	heartbeatData := make(map[string]interface{})
-	if len(request.Body) > 0 {
-		if err := json.Unmarshal(request.Body, &heartbeatData); err != nil {
-			return server.CreateResponseCommand(server.SystemError, fmt.Sprintf("failed to parse heartbeat data: %v", err)), nil
-		}
+func (p *HeartbeatProcessor) ProcessRequest(ctx context.Context, request *remoting.RemotingCommand, conn *remoting.ServerConnection) (*remoting.RemotingCommand, error) {
+	// Convert remoting command to server command
+	serverRequest := &command.RemotingCommand{
+		Code:      command.RequestCode(request.Code),
+		Language:  request.Language,
+		Version:   request.Version,
+		Opaque:    request.Opaque,
+		Flag:      request.Flag,
+		Remark:    request.Remark,
+		ExtFields: request.ExtFields,
+		Body:      request.Body,
 	}
 
-	// 记录心跳信息
-	log.Printf("Received heartbeat from client: %v", heartbeatData)
+	serverConn := &command.Connection{
+		Addr:       conn.Addr,
+		Conn:       conn.Conn,
+		Reader:     conn.Reader,
+		Writer:     conn.Writer,
+		LastUsed:   conn.LastUsed,
+		Closed:     conn.Closed,
+		RemoteAddr: conn.RemoteAddr,
+	}
 
-	response := server.CreateResponseCommand(server.Success, "")
-	return response, nil
+	// Process the request
+	response, err := p.heartbeatProcessor.ProcessRequest(ctx, serverRequest, serverConn)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert response back to remoting command
+	if response != nil {
+		remotingResponse := &remoting.RemotingCommand{
+			Code:      remoting.RequestCode(response.Code),
+			Language:  response.Language,
+			Version:   response.Version,
+			Opaque:    response.Opaque,
+			Flag:      response.Flag,
+			Remark:    response.Remark,
+			ExtFields: response.ExtFields,
+			Body:      response.Body,
+		}
+		return remotingResponse, nil
+	}
+
+	return nil, nil
 }
 
 // UpdateConsumerOffsetProcessor 更新消费者偏移量处理器
@@ -972,24 +1004,24 @@ type UpdateConsumerOffsetProcessor struct {
 }
 
 // ProcessRequest 处理消费者偏移量更新请求
-func (p *UpdateConsumerOffsetProcessor) ProcessRequest(ctx context.Context, request *server.RemotingCommand, conn *server.ServerConnection) (*server.RemotingCommand, error) {
+func (p *UpdateConsumerOffsetProcessor) ProcessRequest(ctx context.Context, request *remoting.RemotingCommand, conn *remoting.ServerConnection) (*remoting.RemotingCommand, error) {
 	consumerGroup := request.ExtFields["consumerGroup"]
 	queueKey := request.ExtFields["queueKey"]
 	commitOffsetStr := request.ExtFields["commitOffset"]
 
 	if consumerGroup == "" || queueKey == "" || commitOffsetStr == "" {
-		return server.CreateResponseCommand(server.SystemError, "consumerGroup, queueKey and commitOffset are required"), nil
+		return remoting.CreateResponseCommand(remoting.SystemError, "consumerGroup, queueKey and commitOffset are required"), nil
 	}
 
 	commitOffset, err := strconv.ParseInt(commitOffsetStr, 10, 64)
 	if err != nil {
-		return server.CreateResponseCommand(server.SystemError, fmt.Sprintf("invalid commitOffset: %v", err)), nil
+		return remoting.CreateResponseCommand(remoting.SystemError, fmt.Sprintf("invalid commitOffset: %v", err)), nil
 	}
 
 	// 更新偏移量（简化实现）
 	log.Printf("Update consumer offset - Group: %s, Queue: %s, Offset: %d", consumerGroup, queueKey, commitOffset)
 
-	response := server.CreateResponseCommand(server.Success, "")
+	response := remoting.CreateResponseCommand(remoting.Success, "")
 	return response, nil
 }
 
@@ -999,7 +1031,7 @@ type SendMessageV2Processor struct {
 }
 
 // ProcessRequest 处理V2版本消息发送请求
-func (p *SendMessageV2Processor) ProcessRequest(ctx context.Context, request *server.RemotingCommand, conn *server.ServerConnection) (*server.RemotingCommand, error) {
+func (p *SendMessageV2Processor) ProcessRequest(ctx context.Context, request *remoting.RemotingCommand, conn *remoting.ServerConnection) (*remoting.RemotingCommand, error) {
 	// ACL权限检查
 	if p.broker.aclMiddleware != nil && p.broker.aclMiddleware.IsAclEnabled() {
 		// 构造请求数据用于验证
@@ -1015,13 +1047,13 @@ func (p *SendMessageV2Processor) ProcessRequest(ctx context.Context, request *se
 		_, err := p.broker.aclMiddleware.ValidateProducerRequest(requestData, request.ExtFields["topic"], conn.GetRemoteAddr())
 		if err != nil {
 			log.Printf("ACL validation failed for producer: %v", err)
-			return server.CreateResponseCommand(server.ResponseCode(1), fmt.Sprintf("Access denied: %v", err)), nil
+			return remoting.CreateResponseCommand(remoting.ResponseCode(1), fmt.Sprintf("Access denied: %v", err)), nil
 		}
 	}
 
 	var header remoting.SendMessageRequestHeader
 	if err := parseRequestHeader(request, &header); err != nil {
-		return server.CreateResponseCommand(server.SystemError, fmt.Sprintf("Failed to parse send message header: %v", err)), nil
+		return remoting.CreateResponseCommand(remoting.SystemError, fmt.Sprintf("Failed to parse send message header: %v", err)), nil
 	}
 
 	// 构造消息并存储
@@ -1040,7 +1072,7 @@ func (p *SendMessageV2Processor) ProcessRequest(ctx context.Context, request *se
 	// 存储消息
 	result, err := p.broker.messageStore.PutMessage(message)
 	if err != nil {
-		return server.CreateResponseCommand(server.SystemError, fmt.Sprintf("Failed to store message: %v", err)), nil
+		return remoting.CreateResponseCommand(remoting.SystemError, fmt.Sprintf("Failed to store message: %v", err)), nil
 	}
 
 	// 构造响应
@@ -1050,7 +1082,7 @@ func (p *SendMessageV2Processor) ProcessRequest(ctx context.Context, request *se
 		QueueOffset: result.QueueOffset,
 	}
 
-	response := server.CreateResponseCommand(server.Success, "")
+	response := remoting.CreateResponseCommand(remoting.Success, "")
 	response.ExtFields = map[string]string{
 		"msgId":       responseHeader.MsgId,
 		"queueId":     strconv.FormatInt(int64(responseHeader.QueueId), 10),
@@ -1065,7 +1097,7 @@ type SendBatchMessageProcessor struct {
 }
 
 // ProcessRequest 处理批量消息发送请求
-func (p *SendBatchMessageProcessor) ProcessRequest(ctx context.Context, request *server.RemotingCommand, conn *server.ServerConnection) (*server.RemotingCommand, error) {
+func (p *SendBatchMessageProcessor) ProcessRequest(ctx context.Context, request *remoting.RemotingCommand, conn *remoting.ServerConnection) (*remoting.RemotingCommand, error) {
 	// ACL权限检查
 	if p.broker.aclMiddleware != nil && p.broker.aclMiddleware.IsAclEnabled() {
 		// 构造请求数据用于验证
@@ -1081,19 +1113,19 @@ func (p *SendBatchMessageProcessor) ProcessRequest(ctx context.Context, request 
 		_, err := p.broker.aclMiddleware.ValidateProducerRequest(requestData, request.ExtFields["topic"], conn.GetRemoteAddr())
 		if err != nil {
 			log.Printf("ACL validation failed for producer: %v", err)
-			return server.CreateResponseCommand(server.ResponseCode(1), fmt.Sprintf("Access denied: %v", err)), nil
+			return remoting.CreateResponseCommand(remoting.ResponseCode(1), fmt.Sprintf("Access denied: %v", err)), nil
 		}
 	}
 
 	var header remoting.SendMessageRequestHeader
 	if err := parseRequestHeader(request, &header); err != nil {
-		return server.CreateResponseCommand(server.SystemError, fmt.Sprintf("Failed to parse send message header: %v", err)), nil
+		return remoting.CreateResponseCommand(remoting.SystemError, fmt.Sprintf("Failed to parse send message header: %v", err)), nil
 	}
 
 	// 解析批量消息
 	messages := make([]*common.Message, 0)
 	if err := json.Unmarshal(request.Body, &messages); err != nil {
-		return server.CreateResponseCommand(server.SystemError, fmt.Sprintf("Failed to parse batch messages: %v", err)), nil
+		return remoting.CreateResponseCommand(remoting.SystemError, fmt.Sprintf("Failed to parse batch messages: %v", err)), nil
 	}
 
 	// 存储批量消息
@@ -1101,13 +1133,13 @@ func (p *SendBatchMessageProcessor) ProcessRequest(ctx context.Context, request 
 	for _, message := range messages {
 		result, err := p.broker.messageStore.PutMessage(message)
 		if err != nil {
-			return server.CreateResponseCommand(server.SystemError, fmt.Sprintf("Failed to store message: %v", err)), nil
+			return remoting.CreateResponseCommand(remoting.SystemError, fmt.Sprintf("Failed to store message: %v", err)), nil
 		}
 		msgIds = append(msgIds, result.MsgId)
 	}
 
 	// 构造响应
-	response := server.CreateResponseCommand(server.Success, "")
+	response := remoting.CreateResponseCommand(remoting.Success, "")
 	response.ExtFields = map[string]string{
 		"msgIds": strings.Join(msgIds, ","),
 	}
@@ -1120,18 +1152,18 @@ type QueryMessageProcessor struct {
 }
 
 // ProcessRequest 处理消息查询请求
-func (p *QueryMessageProcessor) ProcessRequest(ctx context.Context, request *server.RemotingCommand, conn *server.ServerConnection) (*server.RemotingCommand, error) {
+func (p *QueryMessageProcessor) ProcessRequest(ctx context.Context, request *remoting.RemotingCommand, conn *remoting.ServerConnection) (*remoting.RemotingCommand, error) {
 	topic := request.ExtFields["topic"]
 	key := request.ExtFields["key"]
 
 	if topic == "" || key == "" {
-		return server.CreateResponseCommand(server.SystemError, "topic and key are required for message query"), nil
+		return remoting.CreateResponseCommand(remoting.SystemError, "topic and key are required for message query"), nil
 	}
 
 	// 查询消息（简化实现）
 	log.Printf("Query message - Topic: %s, Key: %s", topic, key)
 
-	response := server.CreateResponseCommand(server.Success, "")
+	response := remoting.CreateResponseCommand(remoting.Success, "")
 	return response, nil
 }
 
@@ -1141,18 +1173,18 @@ type QueryMessageByKeyProcessor struct {
 }
 
 // ProcessRequest 处理按键消息查询请求
-func (p *QueryMessageByKeyProcessor) ProcessRequest(ctx context.Context, request *server.RemotingCommand, conn *server.ServerConnection) (*server.RemotingCommand, error) {
+func (p *QueryMessageByKeyProcessor) ProcessRequest(ctx context.Context, request *remoting.RemotingCommand, conn *remoting.ServerConnection) (*remoting.RemotingCommand, error) {
 	topic := request.ExtFields["topic"]
 	key := request.ExtFields["key"]
 
 	if topic == "" || key == "" {
-		return server.CreateResponseCommand(server.SystemError, "topic and key are required for message query by key"), nil
+		return remoting.CreateResponseCommand(remoting.SystemError, "topic and key are required for message query by key"), nil
 	}
 
 	// 按键查询消息（简化实现）
 	log.Printf("Query message by key - Topic: %s, Key: %s", topic, key)
 
-	response := server.CreateResponseCommand(server.Success, "")
+	response := remoting.CreateResponseCommand(remoting.Success, "")
 	return response, nil
 }
 
@@ -1162,16 +1194,16 @@ type UpdateAndCreateTopicProcessor struct {
 }
 
 // ProcessRequest 处理主题创建和更新请求
-func (p *UpdateAndCreateTopicProcessor) ProcessRequest(ctx context.Context, request *server.RemotingCommand, conn *server.ServerConnection) (*server.RemotingCommand, error) {
+func (p *UpdateAndCreateTopicProcessor) ProcessRequest(ctx context.Context, request *remoting.RemotingCommand, conn *remoting.ServerConnection) (*remoting.RemotingCommand, error) {
 	topic := request.ExtFields["topic"]
 	if topic == "" {
-		return server.CreateResponseCommand(server.SystemError, "topic is required"), nil
+		return remoting.CreateResponseCommand(remoting.SystemError, "topic is required"), nil
 	}
 
 	// 创建或更新主题（简化实现）
 	log.Printf("Update or create topic: %s", topic)
 
-	response := server.CreateResponseCommand(server.Success, "")
+	response := remoting.CreateResponseCommand(remoting.Success, "")
 	return response, nil
 }
 
@@ -1181,7 +1213,7 @@ type GetBrokerClusterInfoProcessor struct {
 }
 
 // ProcessRequest 处理获取Broker集群信息请求
-func (p *GetBrokerClusterInfoProcessor) ProcessRequest(ctx context.Context, request *server.RemotingCommand, conn *server.ServerConnection) (*server.RemotingCommand, error) {
+func (p *GetBrokerClusterInfoProcessor) ProcessRequest(ctx context.Context, request *remoting.RemotingCommand, conn *remoting.ServerConnection) (*remoting.RemotingCommand, error) {
 	// 构造集群信息
 	clusterInfo := &remoting.ClusterInfo{
 		BrokerAddrTable: map[string]map[int64]string{
@@ -1196,10 +1228,10 @@ func (p *GetBrokerClusterInfoProcessor) ProcessRequest(ctx context.Context, requ
 
 	data, err := json.Marshal(clusterInfo)
 	if err != nil {
-		return server.CreateResponseCommand(server.SystemError, fmt.Sprintf("failed to marshal cluster info: %v", err)), nil
+		return remoting.CreateResponseCommand(remoting.SystemError, fmt.Sprintf("failed to marshal cluster info: %v", err)), nil
 	}
 
-	response := server.CreateResponseCommand(server.Success, "")
+	response := remoting.CreateResponseCommand(remoting.Success, "")
 	response.Body = data
 	return response, nil
 }
@@ -1210,18 +1242,18 @@ type RegisterBrokerProcessor struct {
 }
 
 // ProcessRequest 处理Broker注册请求
-func (p *RegisterBrokerProcessor) ProcessRequest(ctx context.Context, request *server.RemotingCommand, conn *server.ServerConnection) (*server.RemotingCommand, error) {
+func (p *RegisterBrokerProcessor) ProcessRequest(ctx context.Context, request *remoting.RemotingCommand, conn *remoting.ServerConnection) (*remoting.RemotingCommand, error) {
 	brokerName := request.ExtFields["brokerName"]
 	brokerAddr := request.ExtFields["brokerAddr"]
 
 	if brokerName == "" || brokerAddr == "" {
-		return server.CreateResponseCommand(server.SystemError, "brokerName and brokerAddr are required"), nil
+		return remoting.CreateResponseCommand(remoting.SystemError, "brokerName and brokerAddr are required"), nil
 	}
 
 	// 注册Broker（简化实现）
 	log.Printf("Register broker - Name: %s, Address: %s", brokerName, brokerAddr)
 
-	response := server.CreateResponseCommand(server.Success, "")
+	response := remoting.CreateResponseCommand(remoting.Success, "")
 	return response, nil
 }
 
@@ -1231,18 +1263,18 @@ type UnregisterBrokerProcessor struct {
 }
 
 // ProcessRequest 处理Broker注销请求
-func (p *UnregisterBrokerProcessor) ProcessRequest(ctx context.Context, request *server.RemotingCommand, conn *server.ServerConnection) (*server.RemotingCommand, error) {
+func (p *UnregisterBrokerProcessor) ProcessRequest(ctx context.Context, request *remoting.RemotingCommand, conn *remoting.ServerConnection) (*remoting.RemotingCommand, error) {
 	brokerName := request.ExtFields["brokerName"]
 	brokerAddr := request.ExtFields["brokerAddr"]
 
 	if brokerName == "" || brokerAddr == "" {
-		return server.CreateResponseCommand(server.SystemError, "brokerName and brokerAddr are required"), nil
+		return remoting.CreateResponseCommand(remoting.SystemError, "brokerName and brokerAddr are required"), nil
 	}
 
 	// 注销Broker（简化实现）
 	log.Printf("Unregister broker - Name: %s, Address: %s", brokerName, brokerAddr)
 
-	response := server.CreateResponseCommand(server.Success, "")
+	response := remoting.CreateResponseCommand(remoting.Success, "")
 	return response, nil
 }
 
@@ -1252,11 +1284,11 @@ type EndTransactionProcessor struct {
 }
 
 // ProcessRequest 处理事务结束请求
-func (p *EndTransactionProcessor) ProcessRequest(ctx context.Context, request *server.RemotingCommand, conn *server.ServerConnection) (*server.RemotingCommand, error) {
+func (p *EndTransactionProcessor) ProcessRequest(ctx context.Context, request *remoting.RemotingCommand, conn *remoting.ServerConnection) (*remoting.RemotingCommand, error) {
 	// 处理事务结束（简化实现）
 	log.Printf("End transaction")
 
-	response := server.CreateResponseCommand(server.Success, "")
+	response := remoting.CreateResponseCommand(remoting.Success, "")
 	return response, nil
 }
 
@@ -1266,11 +1298,11 @@ type CheckTransactionStateProcessor struct {
 }
 
 // ProcessRequest 处理事务状态检查请求
-func (p *CheckTransactionStateProcessor) ProcessRequest(ctx context.Context, request *server.RemotingCommand, conn *server.ServerConnection) (*server.RemotingCommand, error) {
+func (p *CheckTransactionStateProcessor) ProcessRequest(ctx context.Context, request *remoting.RemotingCommand, conn *remoting.ServerConnection) (*remoting.RemotingCommand, error) {
 	// 检查事务状态（简化实现）
 	log.Printf("Check transaction state")
 
-	response := server.CreateResponseCommand(server.Success, "")
+	response := remoting.CreateResponseCommand(remoting.Success, "")
 	return response, nil
 }
 
@@ -1280,11 +1312,11 @@ type UpdateBrokerConfigProcessor struct {
 }
 
 // ProcessRequest 处理Broker配置更新请求
-func (p *UpdateBrokerConfigProcessor) ProcessRequest(ctx context.Context, request *server.RemotingCommand, conn *server.ServerConnection) (*server.RemotingCommand, error) {
+func (p *UpdateBrokerConfigProcessor) ProcessRequest(ctx context.Context, request *remoting.RemotingCommand, conn *remoting.ServerConnection) (*remoting.RemotingCommand, error) {
 	// 更新Broker配置（简化实现）
 	log.Printf("Update broker config")
 
-	response := server.CreateResponseCommand(server.Success, "")
+	response := remoting.CreateResponseCommand(remoting.Success, "")
 	return response, nil
 }
 
@@ -1294,7 +1326,7 @@ type GetBrokerConfigProcessor struct {
 }
 
 // ProcessRequest 处理获取Broker配置请求
-func (p *GetBrokerConfigProcessor) ProcessRequest(ctx context.Context, request *server.RemotingCommand, conn *server.ServerConnection) (*server.RemotingCommand, error) {
+func (p *GetBrokerConfigProcessor) ProcessRequest(ctx context.Context, request *remoting.RemotingCommand, conn *remoting.ServerConnection) (*remoting.RemotingCommand, error) {
 	// 获取Broker配置（简化实现）
 	configData := map[string]string{
 		"brokerName": p.broker.config.BrokerName,
@@ -1304,10 +1336,10 @@ func (p *GetBrokerConfigProcessor) ProcessRequest(ctx context.Context, request *
 
 	data, err := json.Marshal(configData)
 	if err != nil {
-		return server.CreateResponseCommand(server.SystemError, fmt.Sprintf("failed to marshal config data: %v", err)), nil
+		return remoting.CreateResponseCommand(remoting.SystemError, fmt.Sprintf("failed to marshal config data: %v", err)), nil
 	}
 
-	response := server.CreateResponseCommand(server.Success, "")
+	response := remoting.CreateResponseCommand(remoting.Success, "")
 	response.Body = data
 	return response, nil
 }

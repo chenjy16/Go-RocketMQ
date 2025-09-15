@@ -70,6 +70,176 @@ const (
 	SYNC_FLUSH
 )
 
+// StoreStats 存储统计信息
+type StoreStats struct {
+	// 消息统计
+	TotalMessagesPut int64         // 总写入消息数
+	TotalMessagesGet int64         // 总读取消息数
+	TotalPutLatency  time.Duration // 总写入延迟
+	TotalGetLatency  time.Duration // 总读取延迟
+	AvgPutLatency    time.Duration // 平均写入延迟
+	AvgGetLatency    time.Duration // 平均读取延迟
+
+	// 磁盘统计
+	TotalDiskWriteBytes int64 // 总磁盘写入字节数
+	TotalDiskReadBytes  int64 // 总磁盘读取字节数
+	DiskUsagePercent    int64 // 磁盘使用百分比
+
+	// 队列统计
+	ActiveQueues     int64            // 活跃队列数
+	TotalQueues      int64            // 总队列数
+	MessagesPerQueue map[string]int64 // 每个队列的消息数
+
+	// 错误统计
+	TotalPutErrors int64     // 总写入错误数
+	TotalGetErrors int64     // 总读取错误数
+	LastErrorTime  time.Time // 最后错误时间
+	LastError      string    // 最后错误信息
+
+	// 时间戳
+	StartTime      time.Time // 启动时间
+	LastUpdateTime time.Time // 最后更新时间
+
+	mutex sync.RWMutex
+}
+
+// PerformanceMonitor 性能监控器
+type PerformanceMonitor struct {
+	stats *StoreStats
+}
+
+// NewPerformanceMonitor 创建性能监控器
+func NewPerformanceMonitor() *PerformanceMonitor {
+	return &PerformanceMonitor{
+		stats: &StoreStats{
+			StartTime:        time.Now(),
+			MessagesPerQueue: make(map[string]int64),
+		},
+	}
+}
+
+// UpdatePutStats 更新写入统计
+func (pm *PerformanceMonitor) UpdatePutStats(latency time.Duration, messageSize int, err error) {
+	pm.stats.mutex.Lock()
+	defer pm.stats.mutex.Unlock()
+
+	pm.stats.TotalMessagesPut++
+	pm.stats.TotalPutLatency += latency
+	pm.stats.AvgPutLatency = pm.stats.TotalPutLatency / time.Duration(pm.stats.TotalMessagesPut)
+	pm.stats.TotalDiskWriteBytes += int64(messageSize)
+	pm.stats.LastUpdateTime = time.Now()
+
+	if err != nil {
+		pm.stats.TotalPutErrors++
+		pm.stats.LastErrorTime = time.Now()
+		pm.stats.LastError = err.Error()
+	}
+}
+
+// UpdateGetStats 更新读取统计
+func (pm *PerformanceMonitor) UpdateGetStats(latency time.Duration, messageSize int, err error) {
+	pm.stats.mutex.Lock()
+	defer pm.stats.mutex.Unlock()
+
+	pm.stats.TotalMessagesGet++
+	pm.stats.TotalGetLatency += latency
+	pm.stats.AvgGetLatency = pm.stats.TotalGetLatency / time.Duration(pm.stats.TotalMessagesGet)
+	pm.stats.TotalDiskReadBytes += int64(messageSize)
+	pm.stats.LastUpdateTime = time.Now()
+
+	if err != nil {
+		pm.stats.TotalGetErrors++
+		pm.stats.LastErrorTime = time.Now()
+		pm.stats.LastError = err.Error()
+	}
+}
+
+// UpdateQueueStats 更新队列统计
+func (pm *PerformanceMonitor) UpdateQueueStats(topic string, queueId int32, messageCount int64) {
+	pm.stats.mutex.Lock()
+	defer pm.stats.mutex.Unlock()
+
+	queueKey := fmt.Sprintf("%s-%d", topic, queueId)
+	pm.stats.MessagesPerQueue[queueKey] = messageCount
+	pm.stats.TotalQueues = int64(len(pm.stats.MessagesPerQueue))
+
+	// 计算活跃队列数（有消息的队列）
+	var activeQueues int64
+	for _, count := range pm.stats.MessagesPerQueue {
+		if count > 0 {
+			activeQueues++
+		}
+	}
+	pm.stats.ActiveQueues = activeQueues
+}
+
+// UpdateDiskStats 更新磁盘统计
+func (pm *PerformanceMonitor) UpdateDiskStats(usagePercent int64) {
+	pm.stats.mutex.Lock()
+	defer pm.stats.mutex.Unlock()
+
+	pm.stats.DiskUsagePercent = usagePercent
+	pm.stats.LastUpdateTime = time.Now()
+}
+
+// GetStats 获取统计信息
+func (pm *PerformanceMonitor) GetStats() *StoreStats {
+	pm.stats.mutex.RLock()
+	defer pm.stats.mutex.RUnlock()
+
+	// 创建统计信息副本
+	statsCopy := &StoreStats{
+		TotalMessagesPut:    pm.stats.TotalMessagesPut,
+		TotalMessagesGet:    pm.stats.TotalMessagesGet,
+		TotalPutLatency:     pm.stats.TotalPutLatency,
+		TotalGetLatency:     pm.stats.TotalGetLatency,
+		AvgPutLatency:       pm.stats.AvgPutLatency,
+		AvgGetLatency:       pm.stats.AvgGetLatency,
+		TotalDiskWriteBytes: pm.stats.TotalDiskWriteBytes,
+		TotalDiskReadBytes:  pm.stats.TotalDiskReadBytes,
+		DiskUsagePercent:    pm.stats.DiskUsagePercent,
+		ActiveQueues:        pm.stats.ActiveQueues,
+		TotalQueues:         pm.stats.TotalQueues,
+		TotalPutErrors:      pm.stats.TotalPutErrors,
+		TotalGetErrors:      pm.stats.TotalGetErrors,
+		LastErrorTime:       pm.stats.LastErrorTime,
+		LastError:           pm.stats.LastError,
+		StartTime:           pm.stats.StartTime,
+		LastUpdateTime:      pm.stats.LastUpdateTime,
+		MessagesPerQueue:    make(map[string]int64),
+	}
+
+	// 复制队列消息数
+	for k, v := range pm.stats.MessagesPerQueue {
+		statsCopy.MessagesPerQueue[k] = v
+	}
+
+	return statsCopy
+}
+
+// ResetStats 重置统计信息
+func (pm *PerformanceMonitor) ResetStats() {
+	pm.stats.mutex.Lock()
+	defer pm.stats.mutex.Unlock()
+
+	pm.stats.TotalMessagesPut = 0
+	pm.stats.TotalMessagesGet = 0
+	pm.stats.TotalPutLatency = 0
+	pm.stats.TotalGetLatency = 0
+	pm.stats.AvgPutLatency = 0
+	pm.stats.AvgGetLatency = 0
+	pm.stats.TotalDiskWriteBytes = 0
+	pm.stats.TotalDiskReadBytes = 0
+	pm.stats.DiskUsagePercent = 0
+	pm.stats.ActiveQueues = 0
+	pm.stats.TotalQueues = 0
+	pm.stats.TotalPutErrors = 0
+	pm.stats.TotalGetErrors = 0
+	pm.stats.LastErrorTime = time.Time{}
+	pm.stats.LastError = ""
+	pm.stats.MessagesPerQueue = make(map[string]int64)
+}
+
 // DefaultMessageStore 默认消息存储实现
 type DefaultMessageStore struct {
 	storeConfig *StoreConfig
@@ -95,6 +265,9 @@ type DefaultMessageStore struct {
 
 	// 队列选择计数器
 	queueSelector int32
+
+	// 性能监控
+	performanceMonitor *PerformanceMonitor
 }
 
 // NewDefaultMessageStore 创建默认消息存储
@@ -109,9 +282,10 @@ func NewDefaultMessageStore(config *StoreConfig) (*DefaultMessageStore, error) {
 	}
 
 	store := &DefaultMessageStore{
-		storeConfig:       config,
-		consumeQueueTable: make(map[string]*ConsumeQueue),
-		shutdown:          make(chan struct{}),
+		storeConfig:        config,
+		consumeQueueTable:  make(map[string]*ConsumeQueue),
+		shutdown:           make(chan struct{}),
+		performanceMonitor: NewPerformanceMonitor(),
 	}
 
 	// 初始化CommitLog
@@ -271,23 +445,46 @@ func (store *DefaultMessageStore) Shutdown() {
 
 // PutMessage 存储消息
 func (store *DefaultMessageStore) PutMessage(msg *common.Message) (*common.SendResult, error) {
+	startTime := time.Now()
+
 	// 选择队列ID（轮询方式）
 	queueId := atomic.AddInt32(&store.queueSelector, 1) % 4 // 使用4个队列
-	return store.PutMessageToQueue(msg, queueId)
+	result, err := store.PutMessageToQueue(msg, queueId)
+
+	// 更新性能统计
+	latency := time.Since(startTime)
+	messageSize := 0
+	if msg != nil {
+		messageSize = len(msg.Body)
+	}
+	store.performanceMonitor.UpdatePutStats(latency, messageSize, err)
+
+	// 更新队列统计
+	if result != nil {
+		store.performanceMonitor.UpdateQueueStats(msg.Topic, queueId, 1) // 简化处理，实际应该获取队列中的消息数
+	}
+
+	return result, err
 }
 
 // PutMessageToQueue 将消息存储到指定队列
 func (store *DefaultMessageStore) PutMessageToQueue(msg *common.Message, queueId int32) (*common.SendResult, error) {
 	if !store.running {
-		return nil, fmt.Errorf("message store is not running")
+		err := fmt.Errorf("message store is not running")
+		store.performanceMonitor.UpdatePutStats(0, 0, err)
+		return nil, err
 	}
 
 	if msg == nil {
-		return nil, fmt.Errorf("message cannot be nil")
+		err := fmt.Errorf("message cannot be nil")
+		store.performanceMonitor.UpdatePutStats(0, 0, err)
+		return nil, err
 	}
 
 	if msg.Topic == "" {
-		return nil, fmt.Errorf("message topic cannot be empty")
+		err := fmt.Errorf("message topic cannot be empty")
+		store.performanceMonitor.UpdatePutStats(0, 0, err)
+		return nil, err
 	}
 
 	// 构建消息扩展信息
@@ -306,12 +503,16 @@ func (store *DefaultMessageStore) PutMessageToQueue(msg *common.Message, queueId
 	// 存储到CommitLog
 	result, err := store.commitLog.PutMessage(msgExt)
 	if err != nil {
-		return nil, fmt.Errorf("failed to put message to commit log: %v", err)
+		err = fmt.Errorf("failed to put message to commit log: %v", err)
+		store.performanceMonitor.UpdatePutStats(0, 0, err)
+		return nil, err
 	}
 
 	// 更新ConsumeQueue
 	if err := store.updateConsumeQueue(msgExt, result); err != nil {
-		return nil, fmt.Errorf("failed to update consume queue: %v", err)
+		err = fmt.Errorf("failed to update consume queue: %v", err)
+		store.performanceMonitor.UpdatePutStats(0, 0, err)
+		return nil, err
 	}
 
 	// 更新Index
@@ -419,6 +620,25 @@ func (store *DefaultMessageStore) getOrCreateConsumeQueue(topic string, queueId 
 
 // GetMessage 获取消息
 func (store *DefaultMessageStore) GetMessage(topic string, queueId int32, offset int64, maxMsgNums int32) ([]*common.MessageExt, error) {
+	startTime := time.Now()
+
+	messages, err := store.getMessageInternal(topic, queueId, offset, maxMsgNums)
+
+	// 更新性能统计
+	latency := time.Since(startTime)
+	messageSize := 0
+	for _, msg := range messages {
+		if msg != nil {
+			messageSize += len(msg.Body)
+		}
+	}
+	store.performanceMonitor.UpdateGetStats(latency, messageSize, err)
+
+	return messages, err
+}
+
+// getMessageInternal 内部获取消息方法
+func (store *DefaultMessageStore) getMessageInternal(topic string, queueId int32, offset int64, maxMsgNums int32) ([]*common.MessageExt, error) {
 	if !store.running {
 		return nil, fmt.Errorf("message store is not running")
 	}
@@ -636,6 +856,16 @@ func (store *DefaultMessageStore) GetMessageIndex(messageKey string) *MessageInd
 // QueryMessagesByKey 根据Key查询消息索引
 func (store *DefaultMessageStore) QueryMessagesByKey(messageKey string) []*MessageIndex {
 	return store.persistenceManager.QueryMessagesByKey(messageKey)
+}
+
+// GetStats 获取存储统计信息
+func (store *DefaultMessageStore) GetStats() *StoreStats {
+	return store.performanceMonitor.GetStats()
+}
+
+// ResetStats 重置统计信息
+func (store *DefaultMessageStore) ResetStats() {
+	store.performanceMonitor.ResetStats()
 }
 
 // recoverConsumeQueues 恢复ConsumeQueue
