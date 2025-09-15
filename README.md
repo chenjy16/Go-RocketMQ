@@ -210,63 +210,28 @@ go-rocketmq/
 │   ├── nameserver/        # NameServer service
 │   └── broker/            # Broker service
 ├── pkg/                   # Core packages
-│   ├── client/           # Client library (independent module)
-│   ├── common/           # Common data structures
-│   ├── nameserver/       # NameServer implementation
+│   ├── acl/              # Access control lists
 │   ├── broker/           # Broker implementation
-│   ├── protocol/         # Communication protocol
-│   ├── store/            # Storage engine
+│   ├── client/           # Client library (independent module)
 │   ├── cluster/          # Cluster management
-│   ├── failover/         # Failover
-│   └── ha/               # High availability
-├── scripts/              # Setup and utility scripts
-│   └── setup-submodules.sh # Submodule initialization script
-├── examples/             # Example programs
-│   ├── README.md         # Example documentation
-│   ├── basic/           # Basic examples
-│   │   ├── producer/    # Producer basic examples
-│   │   ├── consumer/    # Consumer basic examples
-│   │   └── simple-demo/ # Simple demo
-│   ├── advanced/        # Advanced feature examples
-│   │   ├── transaction/ # Transactional messages
-│   │   ├── ordered/     # Ordered messages
-│   │   ├── delayed/     # Delayed messages
-│   │   ├── batch/       # Batch messages
-│   │   └── filter/      # Message filtering
-│   ├── cluster/         # Cluster mode examples
-│   ├── cluster-management/    # Cluster management
-│   ├── failover/             # Failover mechanisms
-│   ├── load-balance/         # Load balancing strategies
-│   ├── ha-config/            # High availability configuration
-│   ├── broker-cluster/       # Broker cluster examples
-│   └── nameserver-cluster/   # NameServer cluster examples
-│   ├── performance/     # Performance testing
-│   │   ├── benchmark/   # Benchmark testing
-│   │   ├── stress-test/ # Stress testing
-│   │   └── monitoring/  # Monitoring examples
-│   ├── integration/     # Integration examples
-│   │   ├── spring-boot/ # Spring Boot integration
-│   │   ├── gin/         # Gin framework integration
-│   │   └── microservice/# Microservice architecture
-│   └── tools/           # Tool examples
-│       ├── admin/       # Admin tools
-│       ├── migration/   # Data migration
-│       └── monitoring/  # Monitoring tools
+│   ├── common/           # Common data structures (submodule)
+│   ├── failover/         # Failover mechanisms
+│   ├── ha/               # High availability
+│   ├── nameserver/       # NameServer implementation
+│   ├── performance/      # Performance optimization features
+│   ├── remoting/         # Network communication layer (submodule)
+│   └── store/            # Storage engine
+├── config/               # Configuration files
+│   ├── config.yaml       # System configuration
+│   └── plain_acl.yml     # ACL configuration
+├── docs/                 # Documentation directory
+│   ├── CLIENT_USAGE.md   # Client usage guide (Chinese)
+│   ├── CLIENT_USAGE_EN.md # Client usage guide (English)
+│   └── PERFORMANCE_OPTIMIZATION.md # Performance optimization guide
+├── examples/             # Example programs (not in repository)
 ├── tools/                # Toolset
 │   └── monitor/          # System monitoring tools
-├── scripts/              # Script files
-│   ├── test_system.sh    # System test script
-│   └── full_test.sh      # Full test script
-├── config/               # Configuration files
-│   └── config.yaml       # System configuration
-├── build/                # Build output directory
-│   └── bin/              # Executable files
-├── logs/                 # Log directory
-├── docs/                 # Documentation directory
-│   ├── ARCHITECTURE.md   # Architecture documentation
-│   ├── QUICKSTART.md     # Quick start guide
-│   ├── CLIENT_USAGE.md   # Client usage guide (Chinese)
-│   └── CLIENT_USAGE_EN.md # Client usage guide (English)
+├── bin/                  # Build output directory
 ├── Makefile              # Build script
 ├── go.mod                # Go module file
 ├── go.sum                # Go dependency verification
@@ -302,17 +267,12 @@ git clone --recurse-submodules https://github.com/chenjy16/Go-RocketMQ.git
 cd Go-RocketMQ
 ```
 
-### 2. Initialize submodules (if not using --recurse-submodules)
-```bash
-./scripts/setup-submodules.sh
-```
-
-### 3. Install dependencies
+### 2. Install dependencies
 ```bash
 go mod tidy
 ```
 
-### 4. Build the project
+### 3. Build the project
 ```bash
 make build
 ```
@@ -320,14 +280,10 @@ make build
 Or build manually:
 ```bash
 # Build NameServer
-go build -o build/bin/nameserver ./cmd/nameserver
+go build -o bin/nameserver ./cmd/nameserver
 
 # Build Broker
-go build -o build/bin/broker ./cmd/broker
-
-# Build example programs
-go build -o build/bin/producer-example ./examples/producer
-go build -o build/bin/consumer-example ./examples/consumer
+go build -o bin/broker ./cmd/broker
 ```
 
 ## Quick Start
@@ -338,7 +294,7 @@ go build -o build/bin/consumer-example ./examples/consumer
 make run-nameserver
 
 # Or run directly
-./build/bin/nameserver
+./bin/nameserver
 ```
 
 NameServer will start on port 9876.
@@ -350,30 +306,10 @@ In a new terminal window:
 make run-broker
 
 # Or run directly
-./build/bin/broker
+./bin/broker
 ```
 
 Broker will start on port 10911 and automatically register with NameServer.
-
-### 3. Run producer example
-In a new terminal window:
-```bash
-# Using Makefile
-make run-producer
-
-# Or run directly
-./build/bin/producer-example
-```
-
-### 4. Run consumer example
-In a new terminal window:
-```bash
-# Using Makefile
-make run-consumer
-
-# Or run directly
-./build/bin/consumer-example
-```
 
 ## Basic Usage Examples
 
@@ -771,12 +707,12 @@ func main() {
 
 ### NameServer Configuration
 ```bash
-./build/bin/nameserver -port 9876
+./bin/nameserver -port 9876
 ```
 
 ### Broker Configuration
 ```bash
-./build/bin/broker \
+./bin/broker \
   -port 10911 \
   -name "broker-1" \
   -cluster "DefaultCluster" \
@@ -888,7 +824,7 @@ make monitor-web
 ### Automated Testing
 ```bash
 # Run full system test
-./scripts/full_test.sh
+make ci-test
 ```
 
 ### Development Related
@@ -903,8 +839,8 @@ make lint           # Run linter
 ### 1. Port Conflicts
 If default ports are occupied, you can specify other ports through parameters:
 ```bash
-./build/bin/nameserver -port 9877
-./build/bin/broker -port 10912 -nameserver "127.0.0.1:9877"
+./bin/nameserver -port 9877
+./bin/broker -port 10912 -nameserver "127.0.0.1:9877"
 ```
 
 ### 2. Connection Failures
@@ -1179,10 +1115,7 @@ For detailed performance optimization guide, see [PERFORMANCE_OPTIMIZATION.md](d
 
 #### Complete Failover & HA Demo
 
-For a comprehensive example demonstrating both failover and HA capabilities working together, see:
-
-- [examples/advanced/failover_ha_demo.go](examples/advanced/failover_ha_demo.go) - Complete demonstration
-- [docs/TESTING_GUIDE.md](docs/TESTING_GUIDE.md) - Testing best practices for HA modules
+For a comprehensive example demonstrating both failover and HA capabilities working together, see the example programs in the `examples/` directory.
 
 ### Key Benefits
 
@@ -1200,7 +1133,7 @@ Our failover and HA modules have been thoroughly tested with improved coverage:
 - **HA Module**: 31.4% test coverage with concurrent safety and replication tests
 - **Stability Improvements**: Fixed race conditions and enhanced test reliability
 
-For detailed testing information, see [docs/TESTING_GUIDE.md](docs/TESTING_GUIDE.md).
+For detailed testing information, see the test files in the respective package directories.
 
 ## Development Plan
 
