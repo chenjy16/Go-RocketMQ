@@ -1,6 +1,9 @@
 package performance
 
 import (
+	"bytes"
+	"compress/gzip"
+	"io/ioutil"
 	"sync"
 	"time"
 
@@ -30,22 +33,26 @@ type NetworkOptimizer struct {
 	config  *connection.ConnectionPoolConfig
 	pool    *connection.ConnectionPool
 	metrics *NetworkMetrics
+	// 压缩配置
+	compressThreshold int // 压缩阈值（字节）
 }
 
 // NetworkOptimizerConfig 网络优化器配置
 type NetworkOptimizerConfig struct {
-	MaxConnections int           // 最大连接数
-	MaxIdleTime    time.Duration // 最大空闲时间
-	ConnectTimeout time.Duration // 连接超时
-	RequestTimeout time.Duration // 请求超时
+	MaxConnections    int           // 最大连接数
+	MaxIdleTime       time.Duration // 最大空闲时间
+	ConnectTimeout    time.Duration // 连接超时
+	RequestTimeout    time.Duration // 请求超时
+	CompressThreshold int           // 压缩阈值（字节）
 }
 
 // DefaultNetworkOptimizerConfig 默认网络优化器配置
 var DefaultNetworkOptimizerConfig = NetworkOptimizerConfig{
-	MaxConnections: 100,
-	MaxIdleTime:    30 * time.Minute,
-	ConnectTimeout: 5 * time.Second,
-	RequestTimeout: 30 * time.Second,
+	MaxConnections:    100,
+	MaxIdleTime:       30 * time.Minute,
+	ConnectTimeout:    5 * time.Second,
+	RequestTimeout:    30 * time.Second,
+	CompressThreshold: 4096, // 默认4KB以上数据进行压缩
 }
 
 // NewNetworkOptimizer 创建网络优化器
@@ -61,10 +68,11 @@ func NewNetworkOptimizer(address string, config NetworkOptimizerConfig) *Network
 	pool := connection.NewConnectionPool(poolConfig)
 
 	return &NetworkOptimizer{
-		address: address,
-		config:  poolConfig,
-		pool:    pool,
-		metrics: &NetworkMetrics{},
+		address:           address,
+		config:            poolConfig,
+		pool:              pool,
+		metrics:           &NetworkMetrics{},
+		compressThreshold: config.CompressThreshold,
 	}
 }
 
@@ -81,6 +89,57 @@ func (no *NetworkOptimizer) ReturnConnection(conn *command.Connection) {
 // Close 关闭网络优化器
 func (no *NetworkOptimizer) Close() error {
 	return no.pool.Close()
+}
+
+// CompressData 压缩数据
+func (no *NetworkOptimizer) CompressData(data []byte) ([]byte, error) {
+	// 如果数据小于阈值，不进行压缩
+	if len(data) < no.compressThreshold {
+		return data, nil
+	}
+
+	var buf bytes.Buffer
+	writer := gzip.NewWriter(&buf)
+
+	_, err := writer.Write(data)
+	if err != nil {
+		return nil, err
+	}
+
+	err = writer.Close()
+	if err != nil {
+		return nil, err
+	}
+
+	compressedData := buf.Bytes()
+
+	// 更新指标
+	no.metrics.mutex.Lock()
+	no.metrics.CompressedBytes += int64(len(data) - len(compressedData))
+	no.metrics.mutex.Unlock()
+
+	return compressedData, nil
+}
+
+// DecompressData 解压数据
+func (no *NetworkOptimizer) DecompressData(data []byte) ([]byte, error) {
+	reader, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+
+	decompressedData, err := ioutil.ReadAll(reader)
+	if err != nil {
+		return nil, err
+	}
+
+	// 更新指标
+	no.metrics.mutex.Lock()
+	no.metrics.DecompressedBytes += int64(len(decompressedData) - len(data))
+	no.metrics.mutex.Unlock()
+
+	return decompressedData, nil
 }
 
 // GetStats 获取网络统计信息

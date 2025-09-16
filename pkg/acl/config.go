@@ -15,17 +15,17 @@ import (
 
 // ConfigManager ACL配置管理器
 type ConfigManager struct {
-	mu         sync.RWMutex
-	configPath string
-	config     *AclConfig
-	accountMap map[string]*Account
+	mu          sync.RWMutex
+	configPath  string
+	config      *AclConfig
+	accountMap  map[string]*Account
 	lastModTime time.Time
 }
 
 // NewConfigManager 创建配置管理器
 func NewConfigManager(configPath string) *ConfigManager {
 	return &ConfigManager{
-		configPath:  configPath,
+		configPath: configPath,
 		config:     &AclConfig{},
 		accountMap: make(map[string]*Account),
 	}
@@ -210,6 +210,19 @@ func (cm *ConfigManager) IsGlobalWhiteRemoteAddress(remoteAddress string) bool {
 	return false
 }
 
+// IsGlobalBlackRemoteAddress 检查是否为全局黑名单地址
+func (cm *ConfigManager) IsGlobalBlackRemoteAddress(remoteAddress string) bool {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+
+	for _, blackAddr := range cm.config.GlobalBlackRemoteAddresses {
+		if cm.matchAddress(remoteAddress, blackAddr) {
+			return true
+		}
+	}
+	return false
+}
+
 // IsAccountWhiteRemoteAddress 检查是否为账户白名单地址
 func (cm *ConfigManager) IsAccountWhiteRemoteAddress(account *Account, remoteAddress string) bool {
 	if account.WhiteRemoteAddress == "" {
@@ -308,7 +321,7 @@ func (cm *ConfigManager) matchAddress(remoteAddress, pattern string) bool {
 		// 将*替换为正则表达式
 		patternRegex := strings.ReplaceAll(pattern, "*", ".*")
 		patternRegex = "^" + patternRegex + "$"
-		
+
 		// 简单的通配符匹配
 		if strings.HasSuffix(pattern, "*") {
 			prefix := strings.TrimSuffix(pattern, "*")

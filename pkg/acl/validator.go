@@ -147,6 +147,11 @@ func (v *PlainAclValidator) IsGlobalWhiteRemoteAddress(remoteAddress string) boo
 	return v.configManager.IsGlobalWhiteRemoteAddress(remoteAddress)
 }
 
+// IsGlobalBlackRemoteAddress 检查是否为全局黑名单地址
+func (v *PlainAclValidator) IsGlobalBlackRemoteAddress(remoteAddress string) bool {
+	return v.configManager.IsGlobalBlackRemoteAddress(remoteAddress)
+}
+
 // GetAccount 获取账户（实现AclManager接口）
 func (v *PlainAclValidator) GetAccount(accessKey string) (*Account, bool) {
 	return v.configManager.GetAccount(accessKey)
@@ -225,6 +230,19 @@ func (v *PlainAclValidator) checkOperationPermission(permission Permission, oper
 	default:
 		return false
 	}
+}
+
+// LogAuditEvent 记录审计事件
+func (v *PlainAclValidator) LogAuditEvent(event *AuditEvent) {
+	// TODO: 实现审计事件记录
+	// 这里可以将审计事件写入日志文件或发送到监控系统
+}
+
+// GetAuditEvents 获取审计事件
+func (v *PlainAclValidator) GetAuditEvents(limit int) []*AuditEvent {
+	// TODO: 实现审计事件获取
+	// 这里可以返回最近的审计事件
+	return make([]*AuditEvent, 0)
 }
 
 // CreateAuthenticationRequest 创建认证请求

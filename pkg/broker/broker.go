@@ -16,7 +16,6 @@ import (
 
 	common "github.com/chenjy16/go-rocketmq-common"
 	remoting "github.com/chenjy16/go-rocketmq-remoting"
-	"github.com/chenjy16/go-rocketmq-remoting/command"
 	"github.com/chenjy16/go-rocketmq-remoting/heartbeat"
 
 	"go-rocketmq/pkg/acl"
@@ -243,8 +242,7 @@ func (b *Broker) registerProtocolProcessors() {
 	b.remotingServer.RegisterProcessor(remoting.UnregisterBroker, unregisterBrokerProcessor)
 
 	// 注册心跳处理器
-	heartbeatProcessor := &HeartbeatProcessor{heartbeatProcessor: heartbeat.NewHeartbeatProcessor()}
-	b.remotingServer.RegisterProcessor(remoting.HeartBeat, heartbeatProcessor)
+	b.remotingServer.RegisterProcessor(remoting.HeartBeat, heartbeat.NewHeartbeatProcessor())
 
 	// 注册更新消费者偏移量处理器
 	updateConsumerOffsetProcessor := &UpdateConsumerOffsetProcessor{broker: b}
@@ -943,59 +941,6 @@ func (p *QueryRouteProcessor) ProcessRequest(ctx context.Context, request *remot
 	response := remoting.CreateResponseCommand(remoting.Success, "")
 	response.Body = data
 	return response, nil
-}
-
-// HeartbeatProcessor 心跳处理器
-type HeartbeatProcessor struct {
-	heartbeatProcessor *heartbeat.HeartbeatProcessor
-}
-
-// ProcessRequest 处理心跳请求
-func (p *HeartbeatProcessor) ProcessRequest(ctx context.Context, request *remoting.RemotingCommand, conn *remoting.ServerConnection) (*remoting.RemotingCommand, error) {
-	// Convert remoting command to server command
-	serverRequest := &command.RemotingCommand{
-		Code:      command.RequestCode(request.Code),
-		Language:  request.Language,
-		Version:   request.Version,
-		Opaque:    request.Opaque,
-		Flag:      request.Flag,
-		Remark:    request.Remark,
-		ExtFields: request.ExtFields,
-		Body:      request.Body,
-	}
-
-	serverConn := &command.Connection{
-		Addr:       conn.Addr,
-		Conn:       conn.Conn,
-		Reader:     conn.Reader,
-		Writer:     conn.Writer,
-		LastUsed:   conn.LastUsed,
-		Closed:     conn.Closed,
-		RemoteAddr: conn.RemoteAddr,
-	}
-
-	// Process the request
-	response, err := p.heartbeatProcessor.ProcessRequest(ctx, serverRequest, serverConn)
-	if err != nil {
-		return nil, err
-	}
-
-	// Convert response back to remoting command
-	if response != nil {
-		remotingResponse := &remoting.RemotingCommand{
-			Code:      remoting.RequestCode(response.Code),
-			Language:  response.Language,
-			Version:   response.Version,
-			Opaque:    response.Opaque,
-			Flag:      response.Flag,
-			Remark:    response.Remark,
-			ExtFields: response.ExtFields,
-			Body:      response.Body,
-		}
-		return remotingResponse, nil
-	}
-
-	return nil, nil
 }
 
 // UpdateConsumerOffsetProcessor 更新消费者偏移量处理器

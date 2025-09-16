@@ -5,6 +5,14 @@ nameserver:
   listen_port: 9876
   log_level: "info"
   log_file: "logs/nameserver.log"
+  # TLS配置
+  tls:
+    enable: false
+    cert_file: ""
+    key_file: ""
+    ca_file: ""
+    server_name: ""
+    skip_verify: false
 
 # Broker 配置  
 broker:
@@ -20,6 +28,15 @@ broker:
   log_level: "info"
   log_file: "logs/broker.log"
   
+  # TLS配置
+  tls:
+    enable: false
+    cert_file: ""
+    key_file: ""
+    ca_file: ""
+    server_name: ""
+    skip_verify: false
+    
   # 消息存储配置
   message_store:
     commit_log_file_size: 1073741824  # 1GB
@@ -43,6 +60,14 @@ producer:
   retry_times_when_send_failed: 2
   retry_times_when_send_async_failed: 2
   max_message_size: 4194304  # 4MB
+  # TLS配置
+  tls:
+    enable: false
+    cert_file: ""
+    key_file: ""
+    ca_file: ""
+    server_name: ""
+    skip_verify: false
 
 # Consumer 配置
 consumer:
@@ -53,6 +78,14 @@ consumer:
   pull_interval: 0  # ms
   pull_threshold_for_queue: 1000
   pull_threshold_size_for_queue: 104857600  # 100MB
+  # TLS配置
+  tls:
+    enable: false
+    cert_file: ""
+    key_file: ""
+    ca_file: ""
+    server_name: ""
+    skip_verify: false
 
 # 性能测试配置
 benchmark:

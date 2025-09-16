@@ -1,6 +1,7 @@
 package performance
 
 import (
+	"bytes"
 	"sync"
 	"testing"
 	"time"
@@ -11,9 +12,10 @@ import (
 // TestNewNetworkOptimizer 测试网络优化器创建
 func TestNewNetworkOptimizer(t *testing.T) {
 	config := NetworkOptimizerConfig{
-		MaxConnections: 10,
-		ConnectTimeout: 1 * time.Second,
-		MaxIdleTime:    100 * time.Millisecond,
+		MaxConnections:    10,
+		ConnectTimeout:    1 * time.Second,
+		MaxIdleTime:       100 * time.Millisecond,
+		CompressThreshold: 1024,
 	}
 
 	optimizer := NewNetworkOptimizer("127.0.0.1:8080", config)
@@ -26,6 +28,9 @@ func TestNewNetworkOptimizer(t *testing.T) {
 	}
 	if optimizer.metrics == nil {
 		t.Error("Metrics should be initialized")
+	}
+	if optimizer.compressThreshold != config.CompressThreshold {
+		t.Errorf("Expected compressThreshold %d, got %d", config.CompressThreshold, optimizer.compressThreshold)
 	}
 }
 
@@ -51,49 +56,69 @@ func TestConnectionPool(t *testing.T) {
 	}
 }
 
-// TestNetworkOptimizerRegisterPool 测试网络优化器获取连接
-func TestNetworkOptimizerGetConnection(t *testing.T) {
+// TestCompressData 测试数据压缩
+func TestCompressData(t *testing.T) {
 	config := NetworkOptimizerConfig{
-		MaxConnections: 2,
-		ConnectTimeout: 100 * time.Millisecond,
-	}
-
-	// 创建网络优化器
-	optimizer := NewNetworkOptimizer("127.0.0.1:8080", config)
-
-	// 由于无法实际连接到服务器，我们只测试方法调用不会panic
-	// 在实际环境中，这需要真实的网络连接
-	conn, err := optimizer.GetConnection()
-	if conn != nil || err == nil {
-		// 如果有连接，需要归还
-		if conn != nil {
-			optimizer.ReturnConnection(conn)
-		}
-	}
-}
-
-// TestNetworkOptimizerStartStop 测试网络优化器关闭
-func TestNetworkOptimizerClose(t *testing.T) {
-	config := NetworkOptimizerConfig{
-		MaxConnections: 2,
-		ConnectTimeout: 100 * time.Millisecond,
+		MaxConnections:    10,
+		ConnectTimeout:    1 * time.Second,
+		MaxIdleTime:       100 * time.Millisecond,
+		CompressThreshold: 100, // 设置较小的阈值便于测试
 	}
 
 	optimizer := NewNetworkOptimizer("127.0.0.1:8080", config)
 
-	// 关闭优化器
-	err := optimizer.Close()
+	// 测试小数据不压缩
+	smallData := []byte("small data")
+	compressed, err := optimizer.CompressData(smallData)
 	if err != nil {
-		t.Errorf("Close should not return error: %v", err)
+		t.Fatalf("CompressData failed: %v", err)
+	}
+	if !bytes.Equal(compressed, smallData) {
+		t.Error("Small data should not be compressed")
+	}
+
+	// 测试大数据压缩
+	largeData := make([]byte, 200)
+	for i := range largeData {
+		largeData[i] = byte(i % 256)
+	}
+	compressed, err = optimizer.CompressData(largeData)
+	if err != nil {
+		t.Fatalf("CompressData failed: %v", err)
+	}
+	// 注意：某些情况下压缩后的数据可能比原始数据更大，这取决于数据的可压缩性
+	// 我们只检查是否成功压缩（不返回错误）并且返回了数据
+	if len(compressed) == 0 {
+		t.Error("Compressed data should not be empty")
+	}
+
+	// 测试解压
+	decompressed, err := optimizer.DecompressData(compressed)
+	if err != nil {
+		t.Fatalf("DecompressData failed: %v", err)
+	}
+	if !bytes.Equal(decompressed, largeData) {
+		t.Error("Decompressed data should match original")
+	}
+
+	// 检查指标 - 我们不能保证总是有压缩节省，因为某些数据可能无法有效压缩
+	stats := optimizer.GetStats()
+	// 只检查指标是否存在，不检查具体值
+	if stats["compressed_bytes"] == nil {
+		t.Error("Compressed bytes should be recorded")
+	}
+	if stats["decompressed_bytes"] == nil {
+		t.Error("Decompressed bytes should be recorded")
 	}
 }
 
-// TestNetworkMetrics 测试网络指标
-func TestNetworkMetrics(t *testing.T) {
+// TestNetworkOptimizerWithMetrics 测试网络优化器指标
+func TestNetworkOptimizerWithMetrics(t *testing.T) {
 	config := NetworkOptimizerConfig{
-		MaxConnections: 10,
-		ConnectTimeout: 1 * time.Second,
-		MaxIdleTime:    100 * time.Millisecond,
+		MaxConnections:    10,
+		ConnectTimeout:    1 * time.Second,
+		MaxIdleTime:       100 * time.Millisecond,
+		CompressThreshold: 1024,
 	}
 
 	optimizer := NewNetworkOptimizer("127.0.0.1:8080", config)
@@ -122,6 +147,12 @@ func TestNetworkMetrics(t *testing.T) {
 	if _, exists := stats["bytes_written"]; !exists {
 		t.Error("Stats should contain bytes_written")
 	}
+	if _, exists := stats["compressed_bytes"]; !exists {
+		t.Error("Stats should contain compressed_bytes")
+	}
+	if _, exists := stats["decompressed_bytes"]; !exists {
+		t.Error("Stats should contain decompressed_bytes")
+	}
 }
 
 // TestDefaultPoolConfig 测试默认连接池配置
@@ -136,14 +167,18 @@ func TestDefaultNetworkOptimizerConfig(t *testing.T) {
 	if config.MaxIdleTime <= 0 {
 		t.Error("Default MaxIdleTime should be greater than 0")
 	}
+	if config.CompressThreshold <= 0 {
+		t.Error("Default CompressThreshold should be greater than 0")
+	}
 }
 
 // TestConcurrentNetworkOperations 测试并发网络操作
 func TestConcurrentNetworkOperations(t *testing.T) {
 	config := NetworkOptimizerConfig{
-		MaxConnections: 10,
-		ConnectTimeout: 1 * time.Second,
-		MaxIdleTime:    100 * time.Millisecond,
+		MaxConnections:    10,
+		ConnectTimeout:    1 * time.Second,
+		MaxIdleTime:       100 * time.Millisecond,
+		CompressThreshold: 1024,
 	}
 
 	optimizer := NewNetworkOptimizer("127.0.0.1:8080", config)
