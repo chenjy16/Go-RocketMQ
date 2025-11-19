@@ -52,6 +52,7 @@ Go-RocketMQ is a Go implementation of the Apache RocketMQ messaging system, desi
 
 ## Project Structure
 
+```
 go-rocketmq/
 ├── cmd/                    # Main program entry
 │   ├── nameserver/        # NameServer service
