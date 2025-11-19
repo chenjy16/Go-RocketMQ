@@ -8,7 +8,7 @@ Go-RocketMQ is a Go implementation of the Apache RocketMQ messaging system, desi
 - **Reliable Messaging**: Ensures message delivery with various delivery guarantees
 - **Scalable Architecture**: Supports horizontal scaling with multiple brokers and nameservers
 - **Rich Messaging Models**: Supports publish/subscribe, point-to-point, and request/reply messaging patterns
-- **Message Filtering**: Supports SQL92-based message filtering
+- **Message Filtering**: Supports Tag-based message filtering
 - **Transaction Messages**: Supports distributed transaction messages
 - **Delay Messages**: Supports delayed message delivery
 - **Order Messages**: Supports ordered message delivery
@@ -52,7 +52,6 @@ Go-RocketMQ is a Go implementation of the Apache RocketMQ messaging system, desi
 
 ## Project Structure
 
-```
 go-rocketmq/
 ├── cmd/                    # Main program entry
 │   ├── nameserver/        # NameServer service
@@ -60,7 +59,6 @@ go-rocketmq/
 ├── pkg/                   # Core packages
 │   ├── acl/              # Access control lists
 │   ├── broker/           # Broker implementation
-│   ├── client/           # Client library (independent module)
 │   ├── cluster/          # Cluster management
 │   ├── common/           # Common data structures (submodule)
 │   ├── config/           # Configuration management
@@ -77,9 +75,10 @@ go-rocketmq/
 │   ├── CLIENT_USAGE_EN.md # Client usage guide (English)
 │   ├── PERFORMANCE_OPTIMIZATION.md # Performance optimization guide
 │   └── TLS_SECURITY.md   # TLS security guide
-├── examples/             # Example programs (not in repository)
 └── tools/                # Utility tools
 ```
+
+> **Note**: The Client SDK is located in a separate repository: [go-rocketmq-client](https://github.com/chenjy16/go-rocketmq-client)
 
 ## Security Features
 
@@ -208,77 +207,19 @@ nameserver:
 
 ## Usage Examples
 
-### Producer
+### Client SDK
 
-```go
-// Create producer configuration
-config := &producer.Config{
-    NamesrvAddr: "127.0.0.1:9876",
-    // TLS and ACL configuration can be added here
-}
+The Go client SDK for this project is maintained in a separate repository. Please refer to [go-rocketmq-client](https://github.com/chenjy16/go-rocketmq-client) for installation and usage instructions.
 
-// Create producer instance
-p := producer.NewProducer(config)
+To use the client:
 
-// Start producer
-err := p.Start()
-if err != nil {
-    log.Fatal("Failed to start producer:", err)
-}
-
-// Send message
-msg := &message.Message{
-    Topic: "TestTopic",
-    Body:  []byte("Hello, RocketMQ!"),
-}
-
-result, err := p.SendSync(msg)
-if err != nil {
-    log.Fatal("Failed to send message:", err)
-}
-
-fmt.Printf("Message sent successfully, msgId: %s\n", result.MsgID)
+```bash
+go get github.com/chenjy16/go-rocketmq-client
 ```
 
-### Consumer
+For detailed examples of Producer and Consumer usage, please check the `examples` directory in the client repository.
 
-```go
-// Create consumer configuration
-config := &consumer.Config{
-    NamesrvAddr:    "127.0.0.1:9876",
-    ConsumerGroup:  "TestGroup",
-    // TLS and ACL configuration can be added here
-}
 
-// Create consumer instance
-c := consumer.NewConsumer(config)
-
-// Subscribe to topic
-err := c.Subscribe("TestTopic", consumer.MessageSelector{}, func(msg *message.MessageExt) error {
-    fmt.Printf("Received message: %s\n", string(msg.Body))
-    return nil
-})
-if err != nil {
-    log.Fatal("Failed to subscribe:", err)
-}
-
-// Start consumer
-err = c.Start()
-if err != nil {
-    log.Fatal("Failed to start consumer:", err)
-}
-
-// Keep the consumer running
-select {}
-```
-
-## Documentation
-
-- [Client Usage Guide (Chinese)](file:///Volumes/ssd/golangwork/Go-RocketMQ/docs/CLIENT_USAGE.md)
-- [Client Usage Guide (English)](file:///Volumes/ssd/golangwork/Go-RocketMQ/docs/CLIENT_USAGE_EN.md)
-- [Performance Optimization Guide](file:///Volumes/ssd/golangwork/Go-RocketMQ/docs/PERFORMANCE_OPTIMIZATION.md)
-- [TLS Security Guide](file:///Volumes/ssd/golangwork/Go-RocketMQ/docs/TLS_SECURITY.md)
-- [Enhancements Summary](file:///Volumes/ssd/golangwork/Go-RocketMQ/ENHANCEMENTS_SUMMARY.md)
 
 ## Testing
 
